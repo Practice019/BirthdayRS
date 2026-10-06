@@ -12,5 +12,7 @@ def test_preview_email():
     assert os.path.exists(preview_file)
     content = open(preview_file, "r", encoding="utf-8").read()
     assert "测试用户" in content
-    assert "今天是您的" in content
+    assert "是您的阳历生日" in content
     assert "生日快乐" in content
+    # 格式带公历日期：今天（YYYY年M月D日）
+    assert "今天（" in content

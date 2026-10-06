@@ -18,6 +18,23 @@ logger = logging.getLogger(__name__)
 DEFAULT_TEMPLATE = "birthday.html"
 
 
+def render_template_with_greeting(env, name: str, template_file: str, extra_info: dict) -> str:
+    """用模板渲染邮件正文，**文案段落一律来自 build_greeting_lines**。
+
+    EmailSender 与 ResendSender 都走这里。两个类若各自拼句子，
+    就是邮件与推送内容漂移的根源 —— 文案只允许有一份，
+    模板只负责排版。
+    """
+    from src.notification.sender_serverchan import build_greeting_lines
+
+    template = env.get_template(template_file or DEFAULT_TEMPLATE)
+    return template.render(
+        name=name,
+        greeting_lines=build_greeting_lines(name, extra_info),
+        **extra_info,
+    )
+
+
 def retry_on_failure(max_retries=3, delay=1, backoff=2):
     """重试装饰器 - 支持指数退避"""
 
@@ -59,8 +76,7 @@ class EmailSender(NotificationBase):
 
     def render_content(self, name: str, template_file: str, extra_info: Dict) -> str:
         try:
-            template = self.env.get_template(template_file or DEFAULT_TEMPLATE)
-            return template.render(name=name, **extra_info)
+            return render_template_with_greeting(self.env, name, template_file, extra_info)
         except Exception as e:
             logger.error(f"Failed to render template {template_file}: {e}")
             raise
@@ -117,9 +133,12 @@ class EmailSender(NotificationBase):
             "month": check_date.month,
             "day": check_date.day,
         }
-        env = Environment(loader=FileSystemLoader("templates"), autoescape=True)
-        template_obj = env.get_template(template or DEFAULT_TEMPLATE)
-        content = template_obj.render(name=recipient.name, **extra_info)
+        # 走 render_content 而不是自己 render：它负责把 greeting_lines
+        # （与推送同一份的文案段落）传进模板。两条路径若各自拼句子，
+        # 就是邮件与推送内容漂移的根源。
+        sender = EmailSender(SMTPConfig(host="x", port=1, username="u", password="p"),
+                             "templates")
+        content = sender.render_content(recipient.name, template, extra_info)
 
         preview_dir = Path("previews")
         preview_dir.mkdir(exist_ok=True)

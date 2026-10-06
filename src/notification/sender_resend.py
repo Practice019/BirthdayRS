@@ -29,7 +29,7 @@ import httpx
 
 from src.core.config import DEFAULT_RESEND_FROM, ResendConfig
 from src.notification.notification_base import NotificationBase
-from src.notification.sender_email import DEFAULT_TEMPLATE, retry_on_failure
+from src.notification.sender_email import retry_on_failure
 
 logger = logging.getLogger(__name__)
 
@@ -55,8 +55,11 @@ class ResendSender(NotificationBase):
         self.env = Environment(loader=FileSystemLoader(templates_dir), autoescape=True)
 
     def render_content(self, name: str, template_file: str, extra_info: dict) -> str:
-        template = self.env.get_template(template_file or DEFAULT_TEMPLATE)
-        return template.render(name=name, **extra_info)
+        # 与 EmailSender 走同一个渲染入口：文案段落来自 build_greeting_lines，
+        # 模板只排版。各自拼句子就是邮件内容漂移的根源。
+        from src.notification.sender_email import render_template_with_greeting
+
+        return render_template_with_greeting(self.env, name, template_file, extra_info)
 
     @retry_on_failure()
     async def send(self, recipient, content: str, days_until: int, age: int) -> None:

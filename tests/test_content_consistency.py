@@ -104,13 +104,34 @@ def test_push_mentions_days_and_greeting():
 def test_same_day_wording():
     """当天时要说"今天"，不能还说"0 天后"。"""
     text = _push_text("张三", dict(_BASE_EXTRA, days_until=0))
-    assert "今天是您的" in text
+    assert "今天（2026年10月6日）是您的" in text
     assert "0 天后" not in text
 
 
 def test_both_calendars_matched():
-    text = _push_text("张三", dict(_BASE_EXTRA, solar_match=True, lunar_match=True))
-    assert "阳历和农历生日" in text
+    """阳历农历都命中时**分开两行**，各自带公历日期。"""
+    extra = dict(_BASE_EXTRA, solar_match=True, lunar_match=True,
+                 year=2026, month=10, day=6, days_until=16)
+    text = _push_text("张三", extra)
+    assert "是您的阳历生日。" in text
+    assert "是您的农历生日。" in text
+    # 两行必须都带同一个日期
+    assert text.count("2026年10月22日") == 2
+
+
+def test_birthday_date_is_today_plus_days():
+    """带公历日期 = 今天 + days_until，两边一致。"""
+    email = _email_text("张三", dict(_BASE_EXTRA, days_until=16))
+    push = _push_text("张三", dict(_BASE_EXTRA, days_until=16))
+    # _BASE_EXTRA 没有 year/month/day，走系统今天兜底 —— 所以两边必然同一天
+    assert "16 天后（" in push
+    assert "16 天后（" in email
+
+
+def test_birthday_date_uses_extra_year_month_day():
+    """有 year/month/day 时用它算生日日期，不依赖系统时钟（可测）。"""
+    text = _push_text("张三", dict(_BASE_EXTRA, year=2026, month=10, day=6, days_until=16))
+    assert "16 天后（2026年10月22日）是您的阳历生日。" in text
 
 
 def test_neither_calendar_matched_does_not_lie():

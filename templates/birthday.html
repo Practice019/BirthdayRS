@@ -6,36 +6,20 @@
 </head>
 <body style="margin:0;padding:24px 16px;background:#f6f8fa;font-family:'Microsoft YaHei','PingFang SC','Segoe UI',sans-serif;font-size:15px;line-height:1.8;color:#1f2328;">
 
-{# 措辞必须与推送文案一致（见 sender_serverchan.render_plain_text）：
-   只讲"哪天是生日"和祝福，不带生肖、星座、节气、节日。
-   差别只在排版 —— 邮件是 HTML，推送是纯文本。
-   改动这里时记得同步改过去，否则同一个生日手机和邮箱说法不同，
-   使用者会怀疑哪个是对的。 #}
+{# 内容由 build_greeting_lines 生成（与推送同一份），这里只排版。
+   改动措辞请去 sender_serverchan，不要在这里另写一套 ——
+   那正是邮件与推送内容漂移的根源。 #}
 <div style="max-width:520px;margin:0 auto;background:#ffffff;border:1px solid #d0d7de;border-radius:6px;padding:28px 32px;">
 
-  <p style="margin:0 0 18px;">亲爱的 {{ name }}：</p>
-
-  <p style="margin:0 0 18px;font-size:17px;color:#e91e63;font-weight:600;">
-{%- if days_until == 0 -%}
-{%- if solar_match and lunar_match -%}
-今天是您的阳历和农历生日。
-{%- elif solar_match -%}
-今天是您的阳历生日。
-{%- else -%}
-今天是您的农历生日。
-{%- endif -%}
-{%- else -%}
-{%- if solar_match and lunar_match -%}
-{{ days_until }} 天后是您的阳历和农历生日。
-{%- elif solar_match -%}
-{{ days_until }} 天后是您的阳历生日。
-{%- else -%}
-{{ days_until }} 天后是您的农历生日。
-{%- endif -%}
-{%- endif %}
-  </p>
-
-  <p style="margin:0;">祝您生日快乐，身体健康，万事如意！</p>
+  {% for line in greeting_lines %}
+    {% if loop.first %}
+      <p style="margin:0 0 18px;">{{ line }}</p>
+    {% elif loop.last %}
+      <p style="margin:18px 0 0;">{{ line }}</p>
+    {% else %}
+      <p style="margin:0 0 6px;font-size:17px;color:#e91e63;font-weight:600;">{{ line }}</p>
+    {% endif %}
+  {% endfor %}
 
 </div>
 
