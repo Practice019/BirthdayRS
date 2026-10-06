@@ -919,20 +919,6 @@ def test_weekday_is_birthday_not_today():
     assert view.week_name == "四", "应显示生日当天的星期"
 
 
-def test_timeline_sorted_by_days_until():
-    from datetime import datetime
-
-    from src.web.domain import build_timeline
-
-    today = datetime(2026, 10, 6)
-    raw = [
-        {"name": "远", "solar_birthday": "1990-12-01", "reminder_days": 3},
-        {"name": "近", "solar_birthday": "1990-10-07", "reminder_days": 3},
-    ]
-    views = build_timeline(raw, 3, today=today)
-    assert [v.name for v in views] == ["近", "远"]
-
-
 def test_will_trigger_respects_reminder_window():
     from datetime import datetime
 

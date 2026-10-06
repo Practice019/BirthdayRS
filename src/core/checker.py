@@ -71,7 +71,6 @@ class BirthdayChecker:
                 'solar_match': False,
                 'lunar_match': False,
                 'days_until': 0,
-                'zodiac': '',           # 生肖
                 'gz_year': '',          # 干支纪年
                 'gz_month': '',         # 干支纪月
                 'gz_day': '',           # 干支纪日
@@ -160,23 +159,11 @@ class BirthdayChecker:
                 except ValueError as e:
                     logger.error(f"Invalid lunar birthday format for {recipient.name}: {e}")
 
-            # 如果是生日，添加生肖和其他信息
-            if extra_info['solar_match'] or extra_info['lunar_match']:
-                try:
-                    # 获取生肖和其他信息
-                    if recipient.lunar_birthday:
-                        year, month, day = self._convert_to_date_parts(
-                            recipient.lunar_birthday)
-                    else:
-                        year, month, day = self._convert_to_date_parts(
-                            recipient.solar_birthday)
-
-                    birth_solar = Solar.fromYmd(year, month, day)
-                    birth_lunar = birth_solar.getLunar()
-                    extra_info['zodiac'] = birth_lunar.getYearShengXiao()
-                except Exception as e:
-                    logger.error(f"Failed to get zodiac info for {recipient.name}: {e}")
-
+            # 命中与否只看日历匹配结果。
+            # 曾经这里还补生肖（zodiac），但正文已不再渲染它 ——
+            # 通知文案是给寿星的祝福短信，不是黄历（见 sender_serverchan 的说明）。
+            # 匹配逻辑与 extra_info 里的农历信息（lunar_month / lunar_day）无关，
+            # 那些仍然保留，供需要时使用。
             return (extra_info['solar_match'] or extra_info['lunar_match']), extra_info
         except Exception as e:
             logger.error(f"Error checking birthday for {recipient.name}: {e}")

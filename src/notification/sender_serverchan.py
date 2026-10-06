@@ -39,34 +39,51 @@ TITLE_LIMIT = 32
 def render_plain_text(name: str, extra_info: Dict) -> str:
     """渲染推送用的纯文本正文。
 
-    ServerChan 与 WxPusher 共用这一份：换渠道时文案一致，使用者不用适应两种格式，
-    也只需要在一处维护。
+    ServerChan / WxPusher / 邮件模板共用同一套措辞（见 templates/birthday.html），
+    差别只在排版：推送是纯文本，邮件是 HTML。**内容必须一致** ——
+    否则同一个生日，手机和邮箱收到的说法不一样，使用者会怀疑哪个是对的。
+
+    只讲两件事：**哪天是生日**、**祝福**。不带生肖、星座、节气、节日 ——
+    这是"给寿星的祝福短信"，不是黄历；收件人是过生日的人，不需要知道
+    自己那天属什么星座。
     """
-    lines = [f"亲爱的{name}："]
-    if extra_info.get("days_until", 0) == 0:
-        if extra_info.get("solar_match") and extra_info.get("lunar_match"):
-            lines.append("今天是您的阳历和农历生日，祝您生日快乐！🎉")
-        elif extra_info.get("solar_match"):
-            lines.append("今天是您的阳历生日，祝您生日快乐！🎉")
-        else:
-            lines.append("今天是您的农历生日，祝您生日快乐！🎉")
-    else:
-        if extra_info.get("solar_match") and extra_info.get("lunar_match"):
-            lines.append(f"{extra_info['days_until']}天后是您的阳历和农历生日！")
-        elif extra_info.get("solar_match"):
-            lines.append(f"{extra_info['days_until']}天后是您的阳历生日！")
-        else:
-            lines.append(f"{extra_info['days_until']}天后是您的农历生日！")
-    # 追加命理和节日信息
-    lines.append(f"生肖：{extra_info.get('zodiac', '')}")
-    lines.append(f"星座：{extra_info.get('constellation', '')}")
-    if extra_info.get("solar_term"):
-        lines.append(f"节气：{extra_info['solar_term']}")
-    if extra_info.get("lunar_festival"):
-        lines.append(f"农历节日：{extra_info['lunar_festival']}")
-    if extra_info.get("solar_festival"):
-        lines.append(f"阳历节日：{extra_info['solar_festival']}")
+    lines = [
+        f"亲爱的{name}：",
+        birthday_sentence(name, extra_info),
+        "",
+        birthday_greeting(),
+    ]
     return "\n".join(lines)
+
+
+def birthday_sentence(name: str, extra_info: Dict) -> str:
+    """「今天 / X 天后是您的<哪种>生日」这一句。
+
+    阳历、农历都命中时说"阳历和农历生日"；只有一个命中时只说那个。
+    """
+    days_until = extra_info.get("days_until", 0)
+    solar = extra_info.get("solar_match")
+    lunar = extra_info.get("lunar_match")
+
+    if solar and lunar:
+        kind = "阳历和农历生日"
+    elif solar:
+        kind = "阳历生日"
+    elif lunar:
+        kind = "农历生日"
+    else:
+        # 理论上不会走到：能被提醒就说明至少命中一种日历。
+        # 兜底说"生日"，不说错话。
+        kind = "生日"
+
+    if days_until == 0:
+        return f"今天是您的{kind}。"
+    return f"{days_until} 天后是您的{kind}。"
+
+
+def birthday_greeting() -> str:
+    """祝福语。与邮件模板里那句保持一字不差。"""
+    return "祝您生日快乐，身体健康，万事如意！"
 
 
 def resolve_endpoint(sckey: str) -> str:

@@ -103,22 +103,16 @@ class EmailSender(NotificationBase):
         )
         check_date = datetime.now()
         extra_info = {
+            # 邮件模板现在只用到这几个字段（生日判定 + 日期）。
+            # 生肖、星座、节气、节日已经不在正文里 —— 见 sender_serverchan
+            # 的说明：这是给寿星的祝福短信，不是黄历。
             "solar_match": True,
             "lunar_match": False,
             "days_until": 0,
             "age": 34,
-            "zodiac": "马",
-            "gz_year": "庚午",
-            "gz_month": "戊寅",
-            "gz_day": "甲子",
-            "gz_hour": "甲子",
             "lunar_month": "正月",
             "lunar_day": "十五",
-            "lunar_festival": "元宵节",
-            "solar_festival": "元旦",
-            "solar_term": "立春",
             "week_name": "一",
-            "constellation": "摩羯",
             "year": check_date.year,
             "month": check_date.month,
             "day": check_date.day,

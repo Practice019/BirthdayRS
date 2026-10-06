@@ -22,7 +22,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime
-from functools import lru_cache
 from typing import Any, Dict, List, Optional
 
 from lunar_python import Solar
@@ -84,7 +83,6 @@ class RecipientView:
     days_until: Optional[int]
     next_birthday: Optional[date]
     age: Optional[int]
-    zodiac: Optional[str]
     week_name: Optional[str]
     #: 是否会真的收到提醒：取决于 days_until 是否落在 reminder_days 窗口内。
     will_trigger: bool
@@ -269,33 +267,6 @@ def _today_meta(today: date) -> Dict[str, Any]:
     }
 
 
-@lru_cache(maxsize=256)
-def _zodiac_cached(year: int, month: int, day: int) -> Optional[str]:
-    """生肖查询（带缓存）。
-
-    ``Solar.getLunar()`` 每次都会重算整年农历（``LunarYear.compute``），
-    单次约 30 ms。列表页每个人都要算一次生肖，10 个人就是 300 ms ——
-    这是主页面加载变慢的主因，因此必须缓存。
-    """
-    try:
-        return Solar.fromYmd(year, month, day).getLunar().getYearShengXiao()
-    except Exception:
-        return None
-
-
-def _zodiac_for(recipient: Recipient) -> Optional[str]:
-    """生肖。
-
-    与 ``BirthdayChecker`` 保持同一算法（有农历值时优先用它，且把它当阳历日期解释），
-    以免界面与邮件显示不同的生肖。
-    """
-    source = recipient.lunar_birthday or recipient.solar_birthday
-    parsed = parse_iso_date(source)
-    if parsed is None:
-        return None
-    return _zodiac_cached(parsed.year, parsed.month, parsed.day)
-
-
 def _next_birthday_fast(
     recipient: Recipient, today: date
 ) -> Optional[Dict[str, Any]]:
@@ -379,7 +350,6 @@ def build_recipient_view(
             "days_until": None,
             "next_birthday": None,
             "age": None,
-            "zodiac": None,
             "week_name": None,
             "will_trigger": False,
             "lunar_from_solar": derived_lunar,
@@ -425,7 +395,7 @@ def build_recipient_view(
 
     hit = _next_birthday_fast(effective, today)
     if hit is None:
-        return base(zodiac=_zodiac_for(recipient))
+        return base()
 
     next_birthday = hit["date"]
     days_until = hit["days_until"]
@@ -441,7 +411,6 @@ def build_recipient_view(
         days_until=days_until,
         next_birthday=next_birthday,
         age=hit["age"],
-        zodiac=_zodiac_for(recipient),
         week_name=_WEEKDAYS[next_birthday.weekday()],
         will_trigger=days_until <= reminder_days,
         lunar_next_solar=lunar_next,
@@ -525,9 +494,9 @@ def render_preview(
     extra: Dict[str, Any] = dict(_today_meta(today_date))
     extra["days_until"] = hit["days_until"]
     extra["age"] = hit["age"]
+    # 注意：不再往 extra 里填生肖 —— 通知文案是祝福短信，不是黄历。
     extra["solar_match"] = hit["solar_match"]
     extra["lunar_match"] = hit["lunar_match"]
-    extra["zodiac"] = _zodiac_for(recipient) or ""
 
     template_file = recipient.template_file or "birthday.html"
 
@@ -570,6 +539,7 @@ def render_reminder_for(recipient: Recipient, today: date) -> Optional[Dict[str,
     extra: Dict[str, Any] = dict(_today_meta(today))
     extra["days_until"] = hit["days_until"]
     extra["age"] = hit["age"]
+    # 注意：不再往 extra 里填生肖 —— 通知文案是祝福短信，不是黄历。
     extra["solar_match"] = hit["solar_match"]
     extra["lunar_match"] = hit["lunar_match"]
     return extra
