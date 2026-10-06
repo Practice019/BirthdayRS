@@ -2,8 +2,8 @@
 生日检查模块
 """
 from datetime import datetime, timedelta, date
-from typing import List, Tuple, Dict, Union
-from lunar_python import Solar
+from typing import List, Optional, Tuple, Dict, Union
+from lunar_python import Lunar, Solar
 from src.core.config import Recipient
 import logging
 
@@ -48,7 +48,50 @@ class BirthdayChecker:
             dt = datetime.combine(date_obj, datetime.min.time())
         else:
             raise ValueError(f"Unsupported date type: {type(date_obj)}")
-        return dt.year, dt.month, dt.day
+        return (dt.year, dt.month, dt.day)
+
+    @staticmethod
+    def _next_solar_date(birth_str: str, today: datetime) -> Optional[date]:
+        """阳历生日（月/日）的**下一次**出现日期，不早于今天。
+
+        与匹配逻辑同口径：只看月日。今天是今天，下一次可能是今年（没过）或明年。
+        """
+        try:
+            birth = datetime.strptime(birth_str, "%Y-%m-%d")
+        except ValueError:
+            return None
+        target = datetime(today.year, birth.month, birth.day)
+        if target < datetime(today.year, today.month, today.day):
+            target = datetime(today.year + 1, birth.month, birth.day)
+        return target.date()
+
+    @staticmethod
+    def _next_lunar_solar_date(lunar_str: str, today: datetime) -> Optional[date]:
+        """农历生日（月/日）下一次对应的**阳历日期**，不早于今天。
+
+        用 Lunar 反查而不是逐日扫描：Solar.getLunar 每次重算整年农历，
+        扫 400 天约 700ms；Lunar.fromYmd(...).getSolar() 直接反查，
+        最多试 3 个农历年，快 20 倍以上。与 src/web/domain 的同名函数口径一致。
+        """
+        try:
+            birth = datetime.strptime(lunar_str, "%Y-%m-%d")
+        except ValueError:
+            return None
+        month, day = birth.month, birth.day
+
+        for lunar_year in range(today.year, today.year + 3):
+            try:
+                lunar = Lunar.fromYmd(lunar_year, month, day)
+                solar = lunar.getSolar()
+            except Exception:
+                continue
+            if solar is None:
+                continue
+            y, m, d = solar.getYear(), solar.getMonth(), solar.getDay()
+            candidate = datetime(y, m, d)
+            if candidate >= datetime(today.year, today.month, today.day):
+                return candidate.date()
+        return None
 
     def _check_birthday(self, recipient: Recipient, today: datetime) -> Tuple[bool, Dict]:
         """
@@ -158,6 +201,18 @@ class BirthdayChecker:
                             break
                 except ValueError as e:
                     logger.error(f"Invalid lunar birthday format for {recipient.name}: {e}")
+
+            # 两个生日各自的下一次日期（独立于窗口命中与否）：
+            # 通知文案要两行都写 —— 阳历生日、农历生日各一行，各自带日期。
+            # 给寿星的祝福短信两条都告诉他，他才知道哪个日子对得上自己。
+            if recipient.solar_birthday:
+                nxt = self._next_solar_date(recipient.solar_birthday, today)
+                if nxt is not None:
+                    extra_info['solar_next_date'] = nxt.isoformat()
+            if recipient.lunar_birthday:
+                nxt = self._next_lunar_solar_date(recipient.lunar_birthday, today)
+                if nxt is not None:
+                    extra_info['lunar_next_solar_date'] = nxt.isoformat()
 
             # 命中与否只看日历匹配结果。
             # 曾经这里还补生肖（zodiac），但正文已不再渲染它 ——

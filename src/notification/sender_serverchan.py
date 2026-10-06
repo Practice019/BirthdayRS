@@ -15,6 +15,7 @@
 **注意**：失败时它返回 HTTP 400（不是 200），所以状态码与 ``code`` 都要看。
 """
 
+from datetime import date
 from typing import Dict
 
 import httpx
@@ -69,11 +70,61 @@ def build_greeting_lines(name: str, extra_info: Dict) -> list:
 
 
 def birthday_sentences(extra_info: Dict) -> list:
-    """「今天 / X 天后（YYYY年M月D日）是您的<哪种>生日」。
+    """「今天 / X 天后（YYYY年M月D日）是您的<哪种>生日」，**两行都写**。
 
-    阳历、农历**分开成两句**，各自带同一个公历日期（= 今天 + days_until）。
-    哪个命中写哪句，都命中写两句。
+    只要这个人有阳历生日和农历生日，就各自写一行，带各自的日期与天数 ——
+    这是给寿星的祝福短信，两条都告诉他，他才知道哪个日子对得上自己。
+
+    日期与天数由调用方算好放进 ``extra_info``：
+
+    - ``solar_next_date``：阳历生日的下一次（``YYYY-MM-DD``）
+    - ``lunar_next_solar_date``：农历生日下一次对应的阳历日期
+
+    缺哪个就只写哪个（例如纯农历旧记录没有阳历）。
     """
+    sentences = []
+    solar_date = extra_info.get("solar_next_date")
+    if solar_date:
+        sentences.append(_birthday_line("阳历生日", solar_date, extra_info))
+    lunar_date = extra_info.get("lunar_next_solar_date")
+    if lunar_date:
+        sentences.append(_birthday_line("农历生日", lunar_date, extra_info))
+
+    if not sentences:
+        # 兜底：日期字段缺失（旧调用方）。退回只写命中的那个，不说错话。
+        return _legacy_sentences(extra_info)
+    return sentences
+
+
+def _birthday_line(kind: str, date_text: str, extra_info: Dict) -> str:
+    """单行：今天 / X 天后（YYYY年M月D日）是您的<哪种>生日。"""
+    parsed = date.fromisoformat(date_text) if isinstance(date_text, str) else date_text
+    days_until = _days_from_today(parsed, extra_info)
+    head = "今天" if days_until == 0 else f"{days_until} 天后"
+    return f"{head}（{parsed.year}年{parsed.month}月{parsed.day}日）是您的{kind}。"
+
+
+def _days_from_today(target: date, extra_info: Dict) -> int:
+    """目标日期距今天的天数。今天 = extra_info 的 year/month/day，缺失用系统今天。"""
+    today = _today_from_extra(extra_info)
+    return (target - today).days
+
+
+def _today_from_extra(extra_info: Dict) -> date:
+    if extra_info.get("year"):
+        try:
+            return date(
+                int(extra_info["year"]),
+                int(extra_info["month"] or 1),
+                int(extra_info["day"] or 1),
+            )
+        except (TypeError, ValueError):
+            pass
+    return date.today()
+
+
+def _legacy_sentences(extra_info: Dict) -> list:
+    """旧调用方没提供日期字段时：只写命中的那个，天数用 days_until。"""
     days_until = extra_info.get("days_until", 0)
     date_text = _birthday_date_text(extra_info)
     head = "今天" if days_until == 0 else f"{days_until} 天后"
@@ -84,8 +135,6 @@ def birthday_sentences(extra_info: Dict) -> list:
     if extra_info.get("lunar_match"):
         sentences.append(f"{head}（{date_text}）是您的农历生日。")
     if not sentences:
-        # 兜底：理论上不会走到（能被提醒就至少命中一种日历）。
-        # 不说错话，也不让正文空白。
         sentences.append(f"{head}（{date_text}）是您的生日。")
     return sentences
 

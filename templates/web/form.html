@@ -24,6 +24,7 @@
     <div class="field{% if errors.name %} field--bad{% endif %}">
       <label for="name">姓名 <span class="req" aria-hidden="true">*</span></label>
       <input id="name" name="name" type="text" required maxlength="64"
+             placeholder="张三"
              value="{{ values.name or '' }}"
              {% if errors.name %}aria-describedby="name-err" aria-invalid="true"{% endif %}>
       {% if errors.name %}<p class="field__err" id="name-err">{{ errors.name }}</p>{% endif %}

@@ -314,7 +314,17 @@ def _next_birthday_fast(
         return None
 
     candidates.sort(key=lambda c: c["days_until"])
-    return candidates[0]
+    nearest = dict(candidates[0])
+
+    # 把**两个**生日各自的下一次日期都带上（不只命中的那个）。
+    # 通知文案要两行都写：阳历生日、农历生日各一行 —— 给寿星的祝福短信
+    # 两条都告诉他，他才知道哪个日子对得上自己。日期独立于"哪个先到"。
+    for c in candidates:
+        if c["solar_match"]:
+            nearest["solar_next_date"] = c["date"].isoformat()
+        if c["lunar_match"]:
+            nearest["lunar_next_solar_date"] = c["date"].isoformat()
+    return nearest
 
 
 def build_recipient_view(
@@ -542,6 +552,10 @@ def render_reminder_for(recipient: Recipient, today: date) -> Optional[Dict[str,
     # 注意：不再往 extra 里填生肖 —— 通知文案是祝福短信，不是黄历。
     extra["solar_match"] = hit["solar_match"]
     extra["lunar_match"] = hit["lunar_match"]
+    # 两个生日各自的下一次日期：通知文案两行都写（见 build_greeting_lines）
+    for key in ("solar_next_date", "lunar_next_solar_date"):
+        if key in hit:
+            extra[key] = hit[key]
     return extra
 
 
