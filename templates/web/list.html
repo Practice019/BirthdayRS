@@ -96,9 +96,15 @@
             </td>
             <td data-label="姓名">
               <span class="name">{{ r.name }}</span>
+              {# 两种受众都要标出来。只标"团体"会造成不对称：扫一眼分不清
+                 "这条是自己"还是"这个字段没生效"。视觉权重不同 ——
+                 团体是实心强调（广播不可撤销），自己是低调的常态。 #}
               {% if r.audience == 'group' %}
-                {# 广播给团体是不可撤销的，必须一眼看得出这条会发出去 #}
-                <span class="chip chip--sm chip--group" title="会广播给团体所有人">团体</span>
+                <span class="chip chip--sm chip--audience chip--group"
+                      title="会广播给团体所有人">团体</span>
+              {% else %}
+                <span class="chip chip--sm chip--audience chip--self"
+                      title="只有你自己会收到">自己</span>
               {% endif %}
               {% if r.note %}<span class="sub">{{ r.note }}</span>{% endif %}
             </td>

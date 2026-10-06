@@ -376,8 +376,10 @@ code, .mono { font-family: var(--font-mono); font-size: 0.92em; }
   * { transition: none !important; animation: none !important; }
 }
 
-/* 「团体」标记：广播给所有人是不可撤销的，用醒目底色区分于普通 chip */
+/* 受众标记：团体实心强调，自己低调描边。两者都要有，见 web 版说明 */
+.chip--audience { font-weight: 600; }
 .chip--group { background: var(--brand); color: #fff; border-color: var(--brand); }
+.chip--self { background: transparent; color: var(--muted); border-color: var(--line-strong); }
 
 /* 折叠的次要配置，同 web 版 */
 .advanced { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 12px; }

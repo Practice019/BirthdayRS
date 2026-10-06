@@ -171,9 +171,16 @@
     var tdName = el('td', null);
     tdName.setAttribute('data-label', '姓名');
     tdName.appendChild(el('span', 'name', r.name));
-    // 广播给团体是不可撤销的，必须一眼看得出这条会发出去
+    // 两种受众都标出来；只标"团体"会造成不对称，扫一眼分不清
+    // "这条是自己"还是"这个字段没生效"。视觉权重不同。
     if (r.audience === 'group') {
-      tdName.appendChild(el('span', 'chip chip--sm chip--group', '团体'));
+      var g = el('span', 'chip chip--sm chip--audience chip--group', '团体');
+      g.title = '会广播给团体所有人';
+      tdName.appendChild(g);
+    } else {
+      var s2 = el('span', 'chip chip--sm chip--audience chip--self', '自己');
+      s2.title = '只有你自己会收到';
+      tdName.appendChild(s2);
     }
     if (r.note) { tdName.appendChild(el('span', 'sub', r.note)); }
     tr.appendChild(tdName);

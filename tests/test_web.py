@@ -2533,3 +2533,24 @@ def test_unparseable_dates_go_last():
     assert views[0].name == "好"
     assert views[1].name == "坏"
     assert views[1].days_until is None
+
+
+async def test_timeline_marks_both_audiences(client, config_file):
+    """两种受众都要在时间轴上标出来，不能只标团体。
+
+    只标"团体"会造成不对称：扫一眼分不清"这条是自己"还是"这个字段没生效"。
+    视觉权重可以不同（团体强调、自己低调），但都必须出现。
+    """
+    # 张三改成团体，李四保持自己
+    await client.post(
+        "/recipients/audience",
+        data={"indices": ["0"], "audience": "group"},
+        follow_redirects=False,
+    )
+    resp = await client.get("/")
+    assert resp.status_code == 200
+    body = resp.text
+    assert "chip--group" in body, "团体的标记没了"
+    assert "chip--self" in body, "自己的标记没了"
+    assert ">团体<" in body.replace("\n", "").replace(" ", "") or "团体" in body
+    assert ">自己<" in body.replace("\n", "").replace(" ", "") or "自己" in body
