@@ -83,7 +83,7 @@ class EmailSender(NotificationBase):
 
     @retry_on_failure()
     async def send(self, recipient: Recipient, content: str, days_until: int, age: int):
-        subject = f"生日提醒- {recipient.name} - {age}岁 - {days_until}天后"
+        subject = f"生日提醒 - {recipient.name} - {age}岁"
         try:
             # 纯文本邮件用 MIMEText 直接构造，不要再套 MIMEMultipart：
             # 单部分正文没必要包成 multipart，多一层结构只会让反垃圾更敏感。

@@ -608,7 +608,15 @@ def create_app(config_path: Optional[str] = None, token: Optional[str] = None) -
         - 返回时如实说改了几条，不说"成功"这种含糊话
         """
         form = await request.form()
-        raw_indices = form.getlist("indices")
+        # 兼容两种提交形式：
+        # - 旧：多个 name="indices" 字段（getlist 返回列表）
+        # - 新：单个逗号分隔的隐藏字段 "1,2,3"（表单不包表格后，JS 收集）
+        raw_indices = []
+        for value in form.getlist("indices"):
+            for part in str(value).split(","):
+                part = part.strip()
+                if part:
+                    raw_indices.append(part)
         audience = (form.get("audience") or "").strip()
 
         if audience not in AUDIENCES:

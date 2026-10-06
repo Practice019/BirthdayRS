@@ -183,8 +183,8 @@ document.querySelectorAll('form.js-test-send').forEach(function (form) {
 })();
 
 /* 时间轴的批量选择与筛选。
-   禁用 JS 时勾选框仍然可用（能选中、能提交），筛选则退化为"显示全部" ——
-   所以这里只做增强，不做拦截。 */
+   禁用 JS 时勾选框仍然可用（能选中），批量按钮用 form="bulk-form" 关联，
+   提交时把勾选索引写进隐藏字段 —— 所以禁用 JS 也能批量提交。 */
 (function () {
   var form = document.getElementById('bulk-form');
   var bar = document.getElementById('bulkbar');
@@ -192,14 +192,17 @@ document.querySelectorAll('form.js-test-send').forEach(function (form) {
     return;
   }
 
-  var tbody = form.querySelector('tbody');
+  // 表格不在 form 里（HTML 禁止嵌套 form），行内测试发送/删除才能独立提交。
+  var table = document.querySelector('table.tbl');
+  var tbody = table ? table.querySelector('tbody') : null;
   var countEl = document.getElementById('bulk-count');
   var allBox = document.getElementById('bulk-all');
   var clearBtn = document.getElementById('bulk-clear');
   var emptyNote = document.getElementById('filter-empty');
+  var indicesInput = document.getElementById('bulk-indices');
 
   function rows() {
-    return Array.prototype.slice.call(form.querySelectorAll('tr.row'));
+    return Array.prototype.slice.call(document.querySelectorAll('tr.row'));
   }
 
   function boxes() {
@@ -211,11 +214,6 @@ document.querySelectorAll('form.js-test-send').forEach(function (form) {
   tbody.addEventListener('click', function (event) {
     // 行内的按钮/链接/输入框有自己的作用，点它们不能顺带选中整行 ——
     // 否则点「删除」会先把这一行勾上，很吓人。
-    //
-    // 这里**不能**把 form 列进排除项：整张表本身就在 <form id="bulk-form"> 里，
-    // closest('form') 对任何点击都会命中，于是每次点击都在这里 return，
-    // 整行点选完全失效。行内真正的嵌套表单（删除/测试发送）会命中 a/button，
-    // 已经能被上面挡住。
     if (event.target.closest('a, button, input, label, select, textarea')) {
       return;
     }
@@ -238,6 +236,11 @@ document.querySelectorAll('form.js-test-send').forEach(function (form) {
     // 一条都没选时收起操作条：它浮在页面底部，空着只会挡内容
     bar.hidden = picked.length === 0;
 
+    // 勾选的索引写进隐藏字段：操作条按钮 form="bulk-form"，提交时带上它。
+    if (indicesInput) {
+      indicesInput.value = picked.map(function (b) { return b.value; }).join(',');
+    }
+
     rows().forEach(function (tr) {
       var box = tr.querySelector('.bulk-check');
       // 用 class 而不是 :has()，兼容性更稳；也便于样式统一控制
@@ -248,7 +251,6 @@ document.querySelectorAll('form.js-test-send').forEach(function (form) {
       var visible = all.filter(function (b) { return !b.closest('tr').hidden; });
       var pickedVisible = visible.filter(function (b) { return b.checked; });
       allBox.checked = visible.length > 0 && pickedVisible.length === visible.length;
-      // indeterminate 表示"选了一部分"，这是勾选框的标准表意
       allBox.indeterminate = pickedVisible.length > 0 && pickedVisible.length < visible.length;
     }
   }
@@ -268,7 +270,6 @@ document.querySelectorAll('form.js-test-send').forEach(function (form) {
     if (emptyNote) { emptyNote.hidden = shown !== 0 || rows().length === 0; }
 
     // 筛选后**取消不可见的勾选**：否则会误改到看不见的记录。
-    // 这是筛选与多选同时存在时最容易出事的地方。
     boxes().forEach(function (b) {
       if (b.closest('tr').hidden) { b.checked = false; }
     });
@@ -330,4 +331,54 @@ document.querySelectorAll('form.js-test-send').forEach(function (form) {
 
   refreshCounts();
   refresh();
+})();
+
+/* 提醒预览：邮件 iframe 按内容自适应高度。
+   写死高度会让内容短时留一大块空白（邮件正文只有称呼+一两句+祝福），
+   而内容长时又要滚动 —— 两种都不好。
+   禁用 JS 时退回 CSS 里的固定高度，仍可滚动查看。 */
+(function () {
+  function fit(frame) {
+    try {
+      var doc = frame.contentDocument;
+      if (!doc || !doc.body) { return; }
+      // 加一点内边距，避免最后一行贴着边框
+      var h = doc.body.scrollHeight + 2;
+      if (h > 0) { frame.style.height = h + 'px'; }
+    } catch (e) { /* 跨域或未就绪，保持 CSS 高度 */ }
+  }
+
+  function init() {
+    // defer 脚本执行时 iframe 可能还没解析出来（querySelectorAll 返回空），
+    // 所以这里必须**连"找不到 iframe"也重试** —— 只在找到后重试的话，
+    // 一次空转就永远没机会了，表现成"高度始终是 CSS 兜底值"。
+    var tries = 0;
+    (function attempt() {
+      var frames = document.querySelectorAll('iframe.mail-frame');
+      if (!frames.length) {
+        if (tries++ < 40) { requestAnimationFrame(attempt); }
+        return;
+      }
+      Array.prototype.forEach.call(frames, function (frame) {
+        if (frame.dataset.fitted === '1') { return; }
+        frame.addEventListener('load', function () { fit(frame); });
+        fit(frame);
+        // srcdoc 的 iframe 可能在脚本执行前就解析完了（错过 load 事件），
+        // 此时 contentDocument.body 未必就绪，读到的 scrollHeight 会是 0。
+        // 用 rAF 少量重试兜住这个竞态。
+        var inner = 0;
+        (function retryFit() {
+          fit(frame);
+          if (frame.style.height) { frame.dataset.fitted = '1'; return; }
+          if (inner++ < 20) { requestAnimationFrame(retryFit); }
+        })();
+      });
+    })();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
 })();

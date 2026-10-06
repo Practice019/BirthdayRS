@@ -75,7 +75,7 @@ class ResendSender(NotificationBase):
         payload = {
             "from": self.config.sender_field,
             "to": [target],
-            "subject": f"生日提醒 - {recipient.name} - {age}岁 - {days_until}天后",
+            "subject": f"生日提醒 - {recipient.name} - {age}岁",
             "html": content,
         }
         headers = {

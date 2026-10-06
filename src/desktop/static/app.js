@@ -622,6 +622,15 @@
         var frame = el('iframe', 'mail-frame');
         frame.title = '邮件预览';
         frame.setAttribute('srcdoc', res.email_html);
+        // 按内容自适应高度：邮件正文很短，写死高度会留一大块空白
+        frame.addEventListener('load', function () {
+          try {
+            var doc = frame.contentDocument;
+            if (doc && doc.body) {
+              frame.style.height = (doc.body.scrollHeight + 2) + 'px';
+            }
+          } catch (e) { /* 保持 CSS 兜底高度 */ }
+        });
         mailBox.appendChild(frame);
       } else {
         mailBox.appendChild(el('p', 'muted', '没有可预览的邮件内容。'));

@@ -237,7 +237,7 @@ class WxPusherSender(NotificationBase):
 
     async def send(self, recipient: Recipient, content: str, days_until: int, age: int) -> None:
         mode, uids, target_desc = await self.resolve_targets(recipient)
-        title = f"生日提醒 · {recipient.name} · {age}岁 · {days_until}天后"
+        title = f"生日提醒 - {recipient.name} - {age}岁"
 
         if mode == "simple":
             await self._send_simple(content, title)

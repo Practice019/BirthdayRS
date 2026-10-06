@@ -196,7 +196,7 @@ class ServerChanSender(NotificationBase):
     @retry_on_failure()
     async def send(self, recipient: Recipient, content: str, days_until: int, age: int):
         url = resolve_endpoint(self.sckey)
-        title = f"生日提醒- {recipient.name} - {age}岁 - {days_until}天后"
+        title = f"生日提醒 - {recipient.name} - {age}岁"
         # title 不能含换行，超长会被服务端截断 —— 主动截断，避免截出半个字。
         data = {"title": title[:TITLE_LIMIT], "desp": content}
         async with httpx.AsyncClient() as client:

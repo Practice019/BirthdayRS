@@ -55,7 +55,6 @@ docs/locale/*/LC_MESSAGES/*.mo
 # 部署脚本的本地覆盖（含令牌，不入库）
 deploy.local.sh
 
-# 本地 curl cookie / 临时文件，绝不能入库
-data/ck
-data/ck*
-data/_t/
+# 运行时数据目录整个忽略：配置（含密钥）、日志、以及调试时抓下来的临时文件。
+# data/ 由 compose / docker run 挂载进容器，仓库里不需要它的任何内容。
+data/

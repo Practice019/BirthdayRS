@@ -40,3 +40,9 @@
     </div>
   {% endif %}
 {% endblock %}
+
+{% block scripts %}
+{# 邮件 iframe 的高度由 app.js 按内容自适应 —— 不加载它的话会停在 CSS 兜底高度，
+   内容短时留一大块空白。 #}
+<script src="/static/app.js" defer></script>
+{% endblock %}

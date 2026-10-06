@@ -460,6 +460,26 @@ def build_timeline(
     )
 
 
+def _extra_from_hit(hit: Dict[str, Any], today_date: date) -> Dict[str, Any]:
+    """把 ``_next_birthday_fast`` 的结果合并成 extra_info。
+
+    **两处渲染入口（预览 render_preview、测试发送 render_reminder_for）
+    都必须走这里。** 曾经它们各自挑字段，新增字段时漏改一处就会出现
+    "预览与实际发送内容不一致" —— 而预览的意义正是"所见即将发"。
+    """
+    extra: Dict[str, Any] = dict(_today_meta(today_date))
+    extra["days_until"] = hit["days_until"]
+    extra["age"] = hit["age"]
+    # 不再往 extra 里填生肖 —— 通知文案是祝福短信，不是黄历。
+    extra["solar_match"] = hit["solar_match"]
+    extra["lunar_match"] = hit["lunar_match"]
+    # 两个生日各自的下一次日期：文案两行都写（见 build_greeting_lines）
+    for key in ("solar_next_date", "lunar_next_solar_date"):
+        if key in hit:
+            extra[key] = hit[key]
+    return extra
+
+
 def render_preview(
     raw: Dict[str, Any],
     templates_dir: str,
@@ -501,12 +521,7 @@ def render_preview(
         return {"ok": False, "reason": "无法计算这个人的下一次生日，请检查日期格式。"}
 
     # 邮件里的「今日信息」块描述的是发送当天，因此用今天的元信息。
-    extra: Dict[str, Any] = dict(_today_meta(today_date))
-    extra["days_until"] = hit["days_until"]
-    extra["age"] = hit["age"]
-    # 注意：不再往 extra 里填生肖 —— 通知文案是祝福短信，不是黄历。
-    extra["solar_match"] = hit["solar_match"]
-    extra["lunar_match"] = hit["lunar_match"]
+    extra = _extra_from_hit(hit, today_date)
 
     template_file = recipient.template_file or "birthday.html"
 
@@ -546,17 +561,7 @@ def render_reminder_for(recipient: Recipient, today: date) -> Optional[Dict[str,
     if hit is None:
         return None
 
-    extra: Dict[str, Any] = dict(_today_meta(today))
-    extra["days_until"] = hit["days_until"]
-    extra["age"] = hit["age"]
-    # 注意：不再往 extra 里填生肖 —— 通知文案是祝福短信，不是黄历。
-    extra["solar_match"] = hit["solar_match"]
-    extra["lunar_match"] = hit["lunar_match"]
-    # 两个生日各自的下一次日期：通知文案两行都写（见 build_greeting_lines）
-    for key in ("solar_next_date", "lunar_next_solar_date"):
-        if key in hit:
-            extra[key] = hit[key]
-    return extra
+    return _extra_from_hit(hit, today)
 
 
 def build_sendable_recipient(raw: Dict[str, Any], fallback_email: Optional[str]) -> Recipient:
