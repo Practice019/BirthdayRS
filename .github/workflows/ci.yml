@@ -1,0 +1,128 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, master ]
+    tags:
+      - 'v*'
+    paths-ignore:
+      - 'docs/**'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    branches: [ main, master ]
+    paths-ignore:
+      - 'docs/**'
+      - '.github/workflows/docs.yml'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  lint:
+    name: Lint Python Code
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies (runtime + dev tools)
+        run: |
+          # 依赖已按 extras 分组，测试需要 dev + web（web 界面单测要 fastapi）
+          uv sync --extra dev --extra web
+
+      - name: Run linter
+        run: uv run flake8 .
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies (runtime + test tools)
+        run: |
+          # 依赖分组见 pyproject.toml：
+          #   dev  -> pytest / pytest-cov / pytest-html
+          #   web  -> fastapi / uvicorn（tests/test_web.py 需要）
+          # 桌面 extra 不装：pywebview 依赖 pythonnet，Linux runner 上装不了。
+          # tests/test_desktop.py 只测 AppApi，不 import webview。
+          uv sync --extra dev --extra web
+
+      - name: Run tests with coverage and HTML report
+        run: |
+          mkdir -p test-results
+          uv run pytest --cov=src --cov-report=html:test-results/coverage --html=test-results/report.html --self-contained-html
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: test-results/
+          retention-days: 30
+  build-and-push:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    needs: test
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+            type=semver,pattern={{version}},enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=sha,format=short
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+
+# 说明：原有一个 update-readme job，会在每次 push 后用 sed 改写 README 里的镜像
+# 地址并自动提交回仓库。已移除，原因：
+#   1. 它用正则替换正文，会覆盖手写内容，且每次产生一个机器人提交；
+#   2. 它硬编码 fetch origin main，换默认分支名就失效；
+#   3. README 里的地址本来就该是对的，不需要机器人事后修正。

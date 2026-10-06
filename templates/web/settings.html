@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}设置 · 生日提醒{% endblock %}
+
+{% block content %}
+  <div class="pagehead">
+    <h1>设置</h1>
+    <p class="pagehead__sub">
+      提醒是发给<strong>你自己</strong>的，不是发给收件人。这里填好之后，到时间就会发到这个邮箱。
+    </p>
+  </div>
+
+  {% if errors.__all__ %}
+    <p class="flash flash--err" role="alert">{{ errors.__all__ }}</p>
+  {% endif %}
+
+  <form class="form form--wide" method="post" action="/settings" novalidate>
+    <div class="field{% if errors.api_key %} field--bad{% endif %}">
+      <label for="api_key">Resend API Key</label>
+
+      <div class="input-group">
+        <input id="api_key" name="api_key" type="text" class="mono"
+               value="" autocomplete="off" spellcheck="false"
+               placeholder="{% if values.has_resend_key %}已保存（留空则不修改）{% else %}re_开头的密钥{% endif %}"
+               data-secret-input
+               {% if errors.api_key %}aria-describedby="key-err" aria-invalid="true"{% endif %}>
+
+        {% if values.has_resend_key %}
+          <span class="input-status" data-state="ok">
+            <span class="input-status__icon" aria-hidden="true"></span>
+            <span class="input-status__text mono" data-secret-mask>{{ values.resend_key_masked }}</span>
+          </span>
+          <button type="button" class="btn btn--sm" data-secret-change>更换</button>
+        {% endif %}
+      </div>
+
+      <p class="field__hint">
+        在 <a href="https://resend.com/api-keys" target="_blank" rel="noopener noreferrer">resend.com/api-keys</a> 创建。
+        密钥只保存在本机 <code>config.yml</code>，界面不会显示完整值。
+      </p>
+      {% if errors.api_key %}<p class="field__err" id="key-err">{{ errors.api_key }}</p>{% endif %}
+
+      {% if values.has_resend_key %}
+        <label class="check">
+          <input type="checkbox" name="clear_api_key" value="1">
+          <span>清除已保存的密钥</span>
+        </label>
+      {% endif %}
+    </div>
+
+    <div class="field{% if errors.default_receive_email %} field--bad{% endif %}">
+      <label for="default_receive_email">接收提醒的邮箱 <span class="req" aria-hidden="true">*</span></label>
+      <input id="default_receive_email" name="default_receive_email" type="text"
+             inputmode="email" value="{{ values.resend_receive_email or '' }}"
+             placeholder="you@qq.com"
+             {% if errors.default_receive_email %}aria-describedby="recv-err" aria-invalid="true"{% endif %}>
+      <p class="field__hint">提醒就发到这里，填你自己的邮箱。</p>
+      {% if errors.default_receive_email %}
+        <p class="field__err" id="recv-err">{{ errors.default_receive_email }}</p>
+      {% endif %}
+    </div>
+
+    <div class="field">
+      <label for="from_name">发件人名字</label>
+      <input id="from_name" name="from_name" type="text"
+             value="{{ values.resend_from_name or '' }}"
+             placeholder="生日提醒"
+             maxlength="60">
+      <p class="field__hint">
+        收件人邮箱里显示的"发件人"。留空会显示成 onboarding，建议填上。
+      </p>
+      {% if errors.from_name %}<p class="field__err">{{ errors.from_name }}</p>{% endif %}
+    </div>
+
+    <div class="field">
+      <label for="from_email">发件地址</label>
+      <input id="from_email" name="from_email" type="text" class="mono"
+             value="{{ values.resend_from_email or '' }}"
+             placeholder="onboarding@resend.dev">
+      <p class="field__hint">
+        留空就用 <code>onboarding@resend.dev</code>。要换成自己的域名，
+        需先在 <a href="https://resend.com/domains" target="_blank" rel="noopener noreferrer">resend.com/domains</a> 验证。
+      </p>
+      {% if errors.from_email %}<p class="field__err">{{ errors.from_email }}</p>{% endif %}
+    </div>
+
+    <div class="field{% if errors.default_reminder_days %} field--bad{% endif %}">
+      <label for="default_reminder_days">默认提前几天提醒</label>
+      <input id="default_reminder_days" name="default_reminder_days" type="number"
+             min="0" max="365"
+             value="{{ values.default_reminder_days if values.default_reminder_days is not none else 3 }}"
+             {% if errors.default_reminder_days %}aria-describedby="days-err" aria-invalid="true"{% endif %}>
+      <p class="field__hint">收件人没单独设置时用它。0 表示只在生日当天提醒。</p>
+      {% if errors.default_reminder_days %}
+        <p class="field__err" id="days-err">{{ errors.default_reminder_days }}</p>
+      {% endif %}
+    </div>
+
+    <div class="actions">
+      <button type="submit" class="btn btn--primary">保存</button>
+    </div>
+  </form>
+
+  <section class="panel">
+    <h2 class="panel__title">验证配置</h2>
+    <div class="panel__body">
+      <p class="muted">
+        保存后可以发一封测试邮件，确认能送到
+        {% if summary.resend_receive_email or summary.default_receive_email %}
+          <span class="mono">{{ summary.resend_receive_email or summary.default_receive_email }}</span>
+        {% else %}
+          接收邮箱
+        {% endif %}
+        。这会真实发送一封邮件。
+      </p>
+      <form method="post" action="/settings/test" class="js-test-send"
+            data-name="测试邮件">
+        <button type="submit" class="btn">发送测试邮件</button>
+      </form>
+    </div>
+  </section>
+
+  {% if summary.types %}
+    <p class="foot-note">
+      当前生效渠道：
+      {% for t in summary.types %}
+        <span class="chip">{{ '邮件' if t in ('email', 'resend') else ('微信推送' if t == 'serverchan' else t) }}</span>
+      {% endfor %}
+    </p>
+  {% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/app.js" defer></script>
+{% endblock %}

@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block title %}时间轴 · 生日提醒{% endblock %}
+
+{% block content %}
+  <div class="pagehead">
+    <h1>时间轴</h1>
+    <p class="pagehead__sub">
+      共 {{ total }} 人{% if trigger_count %}，其中 {{ trigger_count }} 人会在提醒窗口内发送{% endif %}。
+    </p>
+  </div>
+
+  <section class="meta" aria-label="通知配置">
+    <span class="meta__label">通知渠道</span>
+    {% for t in summary.types %}
+      <span class="chip">{{ '邮件' if t in ('email', 'resend') else ('微信推送' if t == 'serverchan' else t) }}</span>
+    {% endfor %}
+    {# 三种发信方式任一生效都算"邮件已配置"，不能只看 SMTP #}
+    {% if summary.resend_configured %}
+      <span class="meta__item">
+        {{ summary.resend_from_name or 'onboarding' }}
+        <span class="muted">发往</span> {{ summary.resend_receive_email or '未填接收邮箱' }}
+      </span>
+    {% elif summary.smtp_configured %}
+      <span class="meta__item">{{ summary.smtp_username }} 通过 {{ summary.smtp_host }}:{{ summary.smtp_port }}</span>
+    {% else %}
+      <span class="meta__item meta__item--warn">
+        邮件未配置，<a href="/settings">去设置</a>
+      </span>
+    {% endif %}
+    <span class="meta__sep" aria-hidden="true"></span>
+    <span class="meta__label">默认提前</span>
+    <span class="meta__item">{{ summary.default_reminder_days }} 天</span>
+  </section>
+
+  {% if not timeline %}
+    <section class="empty">
+      <h2>还没有收件人</h2>
+      <p>添加第一个人，他会出现在这条时间轴上，并显示下一次生日的倒计时。</p>
+      <a class="btn btn--primary" href="/recipients/new">添加收件人</a>
+    </section>
+  {% else %}
+    <table class="tbl">
+      <caption class="sr-only">收件人与下一次生日</caption>
+      <thead>
+        <tr>
+          <th scope="col">姓名</th>
+          <th scope="col">生日</th>
+          <th scope="col">下一次</th>
+          <th scope="col">倒计时</th>
+          <th scope="col">提醒窗口</th>
+          <th scope="col" class="tbl__actions-head">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in timeline %}
+          <tr class="row row--{{ r.status }}">
+            <td data-label="姓名">
+              <span class="name">{{ r.name }}</span>
+              {% if r.note %}<span class="sub">{{ r.note }}</span>{% endif %}
+            </td>
+            <td data-label="生日">
+              {% if r.is_lunar_only %}
+                {# 旧条目：只有农历、没有阳历，无法推导，单独标注 #}
+                <span class="mono">{{ r.lunar_birthday }}</span>
+                <span class="sub sub--warn">
+                  只有农历生日（旧格式）。编辑这条补上阳历生日后会自动换算
+                </span>
+              {% elif not r.solar_valid %}
+                <span class="mono">{{ r.solar_birthday or '未填' }}</span>
+                <span class="sub sub--warn">身份证出生年月日不合理，请修正</span>
+              {% else %}
+                <span class="mono">{{ r.solar_birthday }}</span>
+                {% if r.lunar_text %}
+                  <span class="sub">农历 {{ r.lunar_text }}</span>
+                  {% if r.lunar_mismatch %}
+                    <span class="sub sub--warn">
+                      配置里的农历值（{{ r.lunar_birthday }}）与推算不符，已按阳历计算
+                    </span>
+                  {% endif %}
+                {% endif %}
+              {% endif %}
+            </td>
+            <td data-label="下一次">
+              {% if r.next_birthday %}
+                <span class="mono">{{ r.next_birthday.strftime('%Y-%m-%d') }}</span>
+                <span class="sub">
+                  {% if r.next_kind_text %}<span class="chip chip--sm">{{ r.next_kind_text }}</span>{% endif %}
+                  星期{{ r.week_name }}{% if r.age %} · 满 {{ r.age }} 岁{% endif %}
+                </span>
+                {# 另一个日历的日期也给出，否则使用者会疑惑"农历那天怎么不算" #}
+                {% if r.next_is_lunar == False and r.lunar_next_solar %}
+                  <span class="sub muted">农历生日另在 {{ r.lunar_next_solar }}</span>
+                {% elif r.next_is_lunar == True and r.next_solar_birthday %}
+                  <span class="sub muted">阳历生日另在 {{ r.next_solar_birthday }}</span>
+                {% endif %}
+              {% else %}
+                <span class="sub">无法识别</span>
+              {% endif %}
+            </td>
+            <td data-label="倒计时">
+              <span class="badge badge--{{ r.status }}">{{ r.status_text }}</span>
+            </td>
+            <td data-label="提醒窗口">
+              <span class="mono">{{ r.reminder_days }}</span> 天
+            </td>
+            <td data-label="操作" class="row__actions">
+              <a class="btn btn--sm" href="/recipients/{{ r.index }}/preview">预览</a>
+              <form method="post" action="/recipients/{{ r.index }}/test-send"
+                    class="inline-form js-test-send" data-name="{{ r.name }}">
+                <button type="submit" class="btn btn--sm">测试发送</button>
+              </form>
+              <a class="btn btn--sm" href="/recipients/{{ r.index }}/edit">编辑</a>
+              <form method="post" action="/recipients/{{ r.index }}/delete" class="inline-form js-delete" data-name="{{ r.name }}">
+                <button type="submit" class="btn btn--sm btn--danger">删除</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/app.js" defer></script>
+{% endblock %}

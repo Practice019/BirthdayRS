@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>生日提醒</title>
+</head>
+<body style="margin:0;padding:24px 16px;background:#f6f8fa;font-family:'Microsoft YaHei','PingFang SC','Segoe UI',sans-serif;font-size:15px;line-height:1.8;color:#1f2328;">
+
+<div style="max-width:520px;margin:0 auto;background:#ffffff;border:1px solid #d0d7de;border-radius:6px;padding:28px 32px;">
+
+  <p style="margin:0 0 18px;">亲爱的 {{ name }}：</p>
+
+  <p style="margin:0 0 18px;font-size:17px;color:#e91e63;font-weight:600;">
+{%- if days_until == 0 -%}
+{%- if solar_match and lunar_match -%}
+今天是您的阳历和农历生日，祝您生日快乐！
+{%- elif solar_match -%}
+今天是您的阳历生日，祝您生日快乐！
+{%- else -%}
+今天是您的农历生日，祝您生日快乐！
+{%- endif -%}
+{%- else -%}
+{%- if solar_match and lunar_match -%}
+{{ days_until }} 天后是您的阳历和农历生日。
+{%- elif solar_match -%}
+{{ days_until }} 天后是您的阳历生日。
+{%- else -%}
+{{ days_until }} 天后是您的农历生日。
+{%- endif -%}
+{%- endif %}
+  </p>
+
+  <p style="margin:0 0 18px;color:#59636e;font-size:14px;">
+    今天 {{ '%04d' | format(year) }}-{{ '%02d' | format(month) }}-{{ '%02d' | format(day) }} 星期{{ week_name }}　农历{{ lunar_month }}{{ lunar_day }}{% if constellation %}　{{ constellation }}座{% endif %}{% if solar_term %}　{{ solar_term }}{% endif %}{% if lunar_festival %}　{{ lunar_festival }}{% endif %}{% if solar_festival %}　{{ solar_festival }}{% endif %}
+  </p>
+
+  <p style="margin:0;">祝身体健康，万事如意。</p>
+
+</div>
+
+<p style="max-width:520px;margin:16px auto 0;color:#8c959f;font-size:12px;text-align:center;">
+  生日提醒系统
+</p>
+
+</body>
+</html>

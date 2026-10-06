@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% set is_edit = mode == 'edit' %}
+{% block title %}{{ '编辑收件人' if is_edit else '添加收件人' }} · 生日提醒{% endblock %}
+
+{% block content %}
+  <div class="pagehead">
+    <h1>{{ '编辑收件人' if is_edit else '添加收件人' }}</h1>
+    <p class="pagehead__sub">
+      {% if is_edit %}
+        修改后会直接写入 config.yml，原文件的注释会保留。
+      {% else %}
+        填姓名和身份证上的出生年月日就行，农历生日会自动算出来，到时间提醒发到你的邮箱。
+      {% endif %}
+    </p>
+  </div>
+
+  {% if errors.__all__ %}
+    <p class="flash flash--err" role="alert">{{ errors.__all__ }}</p>
+  {% endif %}
+
+  <form class="form" method="post"
+        action="{{ ('/recipients/' ~ index) if is_edit else '/recipients' }}"
+        novalidate>
+    <div class="field{% if errors.name %} field--bad{% endif %}">
+      <label for="name">姓名 <span class="req" aria-hidden="true">*</span></label>
+      <input id="name" name="name" type="text" required maxlength="64"
+             value="{{ values.name or '' }}"
+             {% if errors.name %}aria-describedby="name-err" aria-invalid="true"{% endif %}>
+      {% if errors.name %}<p class="field__err" id="name-err">{{ errors.name }}</p>{% endif %}
+    </div>
+
+    <div class="field{% if errors.solar_birthday %} field--bad{% endif %}">
+      <label for="solar_birthday">身份证出生年月日 <span class="req" aria-hidden="true">*</span></label>
+
+      <div class="input-group">
+        <input id="solar_birthday" name="solar_birthday" type="text" class="mono"
+               placeholder="1990-01-20" value="{{ values.solar_birthday or '' }}"
+               data-lunar-preview
+               {% if errors.solar_birthday %}aria-describedby="solar-err" aria-invalid="true"{% endif %}>
+        {# 输入框右侧的即时校验指示：图标 + 短词，配文字避免只靠颜色传达 #}
+        <span class="input-status" data-solar-status
+              data-state="{{ values.solar_state or 'empty' }}"
+              aria-live="polite">
+          <span class="input-status__icon" aria-hidden="true"></span>
+          <span class="input-status__text">
+            {%- if values.solar_state == 'ok' -%}有效
+            {%- elif values.solar_state == 'bad' -%}不合理
+            {%- endif -%}
+          </span>
+        </span>
+      </div>
+
+      {% if errors.solar_birthday %}
+        <p class="field__err" id="solar-err">{{ errors.solar_birthday }}</p>
+      {% endif %}
+
+      <p class="lunar-note" id="lunar-note" data-lunar-output aria-live="polite"
+         data-state="{{ values.solar_state or 'empty' }}">
+        {% if values.lunar_display %}
+          下次农历生日：<strong>{{ values.lunar_display }}</strong>{% if values.lunar_next_solar %}（{{ values.lunar_next_solar }}）{% endif %}
+          {% if values.next_solar_birthday %}
+            <span class="lunar-note__next">
+              下次阳历生日：<strong>{{ values.next_solar_birthday }}</strong>
+            </span>
+          {% endif %}
+        {% elif values.solar_state == 'bad' %}
+          身份证出生年月日不合理，请检查格式和日期。
+        {% else %}
+          <span class="lunar-note__placeholder">
+            填好身份证出生年月日后，这里会显示下次农历生日与下次阳历生日。
+          </span>
+        {% endif %}
+      </p>
+    </div>
+
+    <div class="field{% if errors.reminder_days %} field--bad{% endif %}">
+      <label for="reminder_days">提前几天提醒</label>
+      <input id="reminder_days" name="reminder_days" type="number" min="0" max="365"
+             value="{{ values.reminder_days if values.reminder_days is not none else 0 }}"
+             {% if errors.reminder_days %}aria-describedby="days-err" aria-invalid="true"{% endif %}>
+      <p class="field__hint">0 表示只在生日当天提醒</p>
+      {% if errors.reminder_days %}
+        <p class="field__err" id="days-err">{{ errors.reminder_days }}</p>
+      {% endif %}
+    </div>
+
+    <div class="field{% if errors.note %} field--bad{% endif %}">
+      <label for="note">备注</label>
+      <textarea id="note" name="note" rows="3" maxlength="500"
+                placeholder="关于这个人的其他信息，比如「大学同学」「喜欢喝茶」。只有你自己能看到。"
+                {% if errors.note %}aria-describedby="note-err" aria-invalid="true"{% endif %}>{{ values.note or '' }}</textarea>
+      {% if errors.note %}<p class="field__err" id="note-err">{{ errors.note }}</p>{% endif %}
+    </div>
+
+    <div class="actions">
+      <button type="submit" class="btn btn--primary">{{ '保存' if is_edit else '添加' }}</button>
+      <a class="btn" href="/">取消</a>
+    </div>
+  </form>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/app.js" defer></script>
+{% endblock %}

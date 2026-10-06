@@ -1,0 +1,53 @@
+# 版本控制与 CI
+.git
+.github
+.gitignore
+
+# Python 产物
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.egg-info
+.venv
+venv
+
+# 测试与工具
+.pytest_cache
+.coverage
+htmlcov
+tests
+tools
+
+# 界面资源
+# src/desktop 是桌面应用（需要 WebView2，容器里跑不了），不打进镜像。
+# templates/web 必须保留 —— 容器里的网页界面靠它渲染，排除了会直接崩。
+src/desktop
+
+# 文档
+docs
+*.md
+!README.md
+
+# 运行时产物与本地数据
+previews
+logs
+*.log
+birthday_reminder.log
+
+# 敏感配置：绝不进镜像
+# config.yml 含 SMTP 授权码与 Resend API Key，运行时挂载即可
+config.yml
+config.yaml
+config.resend*.yml
+.env
+.env.*
+
+# 编辑器
+.idea
+.vscode
+*.swp
+.DS_Store
+
+# 本地启动脚本（Windows 专用）
+BirthdayRS.bat

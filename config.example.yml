@@ -1,0 +1,52 @@
+# BirthdayRS 配置文件示例
+# 复制成 config.yml 后按需修改。config.yml 已被 .gitignore 忽略，
+# 里面的密钥不会被提交。
+#
+# 只需要配一种通知方式即可。三者可以同时用（逗号分隔）。
+
+notification:
+  # ---- 方式一：Resend（推荐，只需一个 API Key）----
+  # 在 https://resend.com/api-keys 创建密钥。
+  # 注意：没有验证自有域名时，只能发到 key 持有者自己的邮箱；
+  # 要发给任意邮箱需先在 https://resend.com/domains 验证域名。
+  resend:
+    api_key: re_your_api_key_here
+    from_email: onboarding@resend.dev   # 验证域名后改成自己的地址
+    from_name: 生日提醒                  # 收件人邮箱里显示的发件人名字
+    default_receive_email: you@example.com  # 提醒发到这里（你自己的邮箱）
+    default_template_file: birthday.html
+    default_reminder_days: 3
+
+  # ---- 方式二：SMTP ----
+  smtp:
+    host: smtp.example.com
+    port: 587
+    username: your_email@example.com
+    password: your_password            # QQ 邮箱需用"授权码"，不是登录密码
+    default_receive_email: you@example.com
+    default_template_file: birthday.html
+    default_reminder_days: 3
+
+  # ---- 方式三：ServerChan（微信推送，无需域名）----
+  # 在 https://sct.ftqq.com 微信扫码登录后拿到 SENDKEY
+  serverchan:
+    default_sckey: your_serverchan_sckey
+    default_reminder_days: 3
+
+  # 用哪个渠道：resend / email / serverchan，多个用逗号分隔
+  start_notification: resend
+
+recipients:
+  # 收件人只需四项：姓名、身份证出生年月日、提前天数、备注
+  # 农历生日由身份证日期自动换算，不要手填。
+  # 提醒发给上面 default_receive_email 指定的邮箱，不是发给这里的本人。
+  - name: 张三
+    solar_birthday: 1990-01-20  # 身份证上的出生日期
+    lunar_birthday: 1989-12-24  # 由上一行自动换算，人工无需维护
+    reminder_days: 3            # 提前几天提醒，0 = 当天
+    note: 大学同学               # 只给自己看的备注
+
+  - name: 李四
+    solar_birthday: 1991-03-30
+    lunar_birthday: 1991-02-15
+    reminder_days: 7

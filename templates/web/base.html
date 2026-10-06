@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}生日提醒{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar__inner">
+      <a class="brand" href="/">
+        <span class="brand__mark" aria-hidden="true"></span>
+        <span class="brand__text">生日提醒</span>
+      </a>
+      <nav class="nav" aria-label="主导航">
+        <a class="nav__link{% if active == 'home' %} nav__link--current{% endif %}" href="/">时间轴</a>
+        <a class="nav__link{% if active == 'new' %} nav__link--current{% endif %}" href="/recipients/new">添加收件人</a>
+        <a class="nav__link{% if active == 'settings' %} nav__link--current{% endif %}" href="/settings">设置</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="page">
+    {% if notice %}
+      <p class="flash flash--ok" role="status">{{ notice }}</p>
+    {% endif %}
+    {% if error %}
+      <p class="flash flash--err" role="alert">{{ error }}</p>
+    {% endif %}
+
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="foot">
+    <p>发送由 <code>run</code> 命令负责，界面只维护名单。改完配置记得让定时任务重新加载。</p>
+  </footer>
+
+  {% block scripts %}{% endblock %}
+</body>
+</html>

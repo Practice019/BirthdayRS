@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+  <div class="pagehead">
+    <h1>{{ title }}</h1>
+  </div>
+  <p class="flash flash--err" role="alert">{{ detail }}</p>
+  <a class="btn" href="/">重试</a>
+{% endblock %}

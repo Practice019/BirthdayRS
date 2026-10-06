@@ -1,0 +1,52 @@
+# =============================================================================
+# BirthdayRS — Docker Compose
+#
+# 两种用法：
+#
+#   1) 每天定时发一次提醒（推荐，最省事）
+#      docker compose run --rm birthdayrs
+#      然后把这个命令交给宿主机的 cron / 任务计划程序
+#
+#   2) 常驻 Web 管理台（有端口，适合局域网访问）
+#      docker compose --profile web up -d
+#
+# config.yml 用挂载而不是烘进镜像 —— 它含授权码与 API Key。
+# =============================================================================
+
+services:
+  # ---- 一次性任务：跑一次检查就退出（配合宿主机 cron）----
+  birthdayrs:
+    build: .
+    image: birthdayrs:latest
+    container_name: birthdayrs
+    # 时区决定"今天"的判断，必须与使用者所在时区一致
+    environment:
+      TZ: Asia/Shanghai
+    volumes:
+      - ./config.yml:/app/config.yml:ro
+      # CLI 的日志写在**工作目录**（/app/birthday_reminder.log），
+      # 所以要挂文件本身或整个 /app 的日志文件，挂目录名不能对上。
+      - ./birthday_reminder.log:/app/birthday_reminder.log
+    command: ["run", "--config", "/app/config.yml"]
+    restart: "no"
+
+  # ---- 常驻 Web 管理台（可选，需 --profile web 才启动）----
+  birthdayrs-web:
+    build:
+      context: .
+      args:
+        # Web 命令需要 fastapi/uvicorn，用构建参数装上
+        INSTALL_WEB: "1"
+    image: birthdayrs:web
+    container_name: birthdayrs-web
+    profiles: ["web"]
+    environment:
+      TZ: Asia/Shanghai
+    volumes:
+      # 这个服务要写配置（改设置、增删收件人），因此不能只读挂载
+      - ./config.yml:/app/config.yml
+      - ./birthday_reminder.log:/app/birthday_reminder.log
+    command: ["web", "--config", "/app/config.yml", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "127.0.0.1:8000:8000"   # 只绑本机；要对局域网开放改成 "8000:8000"
+    restart: unless-stopped

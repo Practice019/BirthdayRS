@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}预览 · {{ name }}{% endblock %}
+
+{% block content %}
+  <div class="pagehead">
+    <h1>提醒预览 · {{ name }}</h1>
+    <p class="pagehead__sub">
+      {% if result.ok %}
+        这是按今天的日期算出的下一次生日，实际发送时的内容。
+        {% if result.days_until == 0 %}今天发送{% else %}还有 {{ result.days_until }} 天{% endif %}{% if result.age %}，满 {{ result.age }} 岁{% endif %}。
+      {% else %}
+        暂时无法预览。
+      {% endif %}
+      预览不会真的发出通知。    </p>
+  </div>
+
+  {% if not result.ok %}
+    <p class="flash flash--err" role="alert">{{ result.reason }}</p>
+    <a class="btn" href="/">返回时间轴</a>
+  {% else %}
+    <div class="actions actions--top">
+      <a class="btn" href="/recipients/{{ index }}/edit">编辑这条</a>
+      <a class="btn" href="/">返回时间轴</a>
+    </div>
+
+    <div class="preview-grid">
+      <section class="panel">
+        <h2 class="panel__title">邮件</h2>
+        {% if result.email_error %}
+          <p class="flash flash--err" role="alert">{{ result.email_error }}</p>
+        {% else %}
+          <iframe class="mail-frame" title="邮件预览" srcdoc="{{ result.email_html }}"></iframe>
+        {% endif %}
+      </section>
+
+      <section class="panel">
+        <h2 class="panel__title">微信推送</h2>
+        <pre class="plaintext">{{ result.serverchan_text }}</pre>
+      </section>
+    </div>
+  {% endif %}
+{% endblock %}

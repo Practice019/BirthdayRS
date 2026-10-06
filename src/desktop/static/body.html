@@ -1,0 +1,192 @@
+<div class="app">
+  <header class="topbar">
+    <div class="topbar__inner">
+      <div class="brand">
+        <span class="brand__mark" aria-hidden="true"></span>
+        <span>生日提醒</span>
+      </div>
+      <nav class="nav" aria-label="主导航">
+        <button type="button" class="nav__link nav__link--current" data-view="timeline">时间轴</button>
+        <button type="button" class="nav__link" data-view="form">添加收件人</button>
+        <button type="button" class="nav__link" data-view="settings">设置</button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="main">
+    <div class="wrap">
+      <p id="flash" class="flash hidden" role="status" aria-live="polite"></p>
+
+      <!-- ================= 时间轴 ================= -->
+      <section id="view-timeline">
+        <div class="pagehead">
+          <h1>时间轴</h1>
+          <p id="timeline-sub">加载中…</p>
+        </div>
+
+        <section id="meta" class="meta" aria-label="通知配置"></section>
+
+        <table id="timeline-table" class="tbl">
+          <caption style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">
+            收件人与下一次生日
+          </caption>
+          <thead>
+            <tr>
+              <th scope="col">姓名</th>
+              <th scope="col">生日</th>
+              <th scope="col">下一次</th>
+              <th scope="col">倒计时</th>
+              <th scope="col">提醒窗口</th>
+              <th scope="col" class="tbl__actions-head">操作</th>
+            </tr>
+          </thead>
+          <tbody id="timeline-body"></tbody>
+        </table>
+
+        <section id="timeline-empty" class="empty hidden">
+          <h2>还没有收件人</h2>
+          <p>添加第一个人，他会出现在这条时间轴上，并显示下一次生日的倒计时。</p>
+          <button type="button" id="btn-add" class="btn btn--primary">添加收件人</button>
+        </section>
+      </section>
+
+      <!-- ================= 添加 / 编辑 ================= -->
+      <section id="view-form" class="hidden">
+        <div class="pagehead">
+          <h1 id="form-title">添加收件人</h1>
+          <p id="form-sub"></p>
+        </div>
+
+        <form id="recipient-form" class="form form--narrow" novalidate style="max-width:620px">
+          <p id="form-error" class="field__err hidden"></p>
+
+          <div class="field">
+            <label for="f-name">姓名 <span class="req" aria-hidden="true">*</span></label>
+            <input id="f-name" type="text" required maxlength="64" autocomplete="off">
+          </div>
+
+          <div class="field">
+            <label for="f-solar">身份证出生年月日 <span class="req" aria-hidden="true">*</span></label>
+            <div class="input-group">
+              <input id="f-solar" type="text" class="mono" placeholder="1990-01-20"
+                     autocomplete="off" spellcheck="false">
+              <span id="solar-status" class="input-status" data-state="empty" aria-live="polite">
+                <span class="input-status__icon" aria-hidden="true"></span>
+                <span class="input-status__text"></span>
+              </span>
+            </div>
+            <p class="field__hint">身份证上的出生日期，例如 1990-01-20</p>
+            <p id="lunar-note" class="lunar-note" data-state="empty" aria-live="polite">
+              填好身份证出生年月日后，这里会显示下次农历生日与下次阳历生日。
+            </p>
+          </div>
+
+          <div class="field">
+            <label for="f-reminder_days">提前几天提醒</label>
+            <input id="f-reminder_days" type="number" min="0" max="365" value="3"
+                   style="max-width:180px">
+            <p class="field__hint">0 表示只在生日当天提醒</p>
+          </div>
+
+          <div class="field">
+            <label for="f-note">备注</label>
+            <textarea id="f-note" rows="3" maxlength="500"
+                      placeholder="关于这个人的其他信息，比如「大学同学」「喜欢喝茶」。只有你自己能看到。"></textarea>
+          </div>
+
+          <div class="actions">
+            <button type="submit" class="btn btn--primary">保存</button>
+            <button type="button" class="btn" data-goto-timeline>取消</button>
+          </div>
+        </form>
+      </section>
+
+      <!-- ================= 预览 ================= -->
+      <section id="view-preview" class="hidden">
+        <div class="pagehead">
+          <h1 id="preview-title">提醒预览</h1>
+          <p id="preview-sub"></p>
+        </div>
+
+        <div class="actions" style="margin:0 0 16px">
+          <button type="button" class="btn" data-goto-timeline>返回时间轴</button>
+        </div>
+
+        <div class="preview-grid">
+          <section class="panel">
+            <h2 class="panel__title">邮件</h2>
+            <div id="preview-mail"></div>
+          </section>
+          <section class="panel">
+            <h2 class="panel__title">微信推送</h2>
+            <pre id="preview-wechat" class="plaintext"></pre>
+          </section>
+        </div>
+      </section>
+
+      <!-- ================= 设置 ================= -->
+      <section id="view-settings" class="hidden">
+        <div class="pagehead">
+          <h1>设置</h1>
+          <p>提醒是发给<strong>你自己</strong>的，不是发给收件人。这里填好之后，到时间就会发到这个邮箱。</p>
+        </div>
+
+        <form id="settings-form" class="form" novalidate style="max-width:680px">
+          <div class="field">
+            <label for="s-key">Resend API Key</label>
+            <div class="input-group" style="grid-template-columns:1fr auto auto">
+              <input id="s-key" type="text" class="mono" autocomplete="off" spellcheck="false"
+                     placeholder="re_开头的密钥（留空则不修改）">
+              <span id="s-key-status" class="input-status hidden" data-state="ok">
+                <span class="input-status__icon" aria-hidden="true"></span>
+                <span class="input-status__text mono" id="s-key-mask"></span>
+              </span>
+              <button type="button" id="s-key-change" class="btn btn--sm hidden">更换</button>
+            </div>
+            <p class="field__hint">在 resend.com/api-keys 创建。密钥只保存在本机 config.yml。</p>
+            <label id="s-clear-key-wrap" class="check hidden">
+              <input type="checkbox" id="s-clear-key">
+              <span>清除已保存的密钥</span>
+            </label>
+          </div>
+
+          <div class="field">
+            <label for="s-receive">接收提醒的邮箱 <span class="req" aria-hidden="true">*</span></label>
+            <input id="s-receive" type="text" inputmode="email" placeholder="you@qq.com">
+            <p class="field__hint">提醒就发到这里，填你自己的邮箱。</p>
+          </div>
+
+          <div class="field">
+            <label for="s-from-name">发件人名字</label>
+            <input id="s-from-name" type="text" maxlength="60" placeholder="生日提醒">
+            <p class="field__hint">收件人邮箱里显示的"发件人"。留空会显示成 onboarding，建议填上。</p>
+          </div>
+
+          <div class="field">
+            <label for="s-from-email">发件地址</label>
+            <input id="s-from-email" type="text" class="mono" placeholder="onboarding@resend.dev">
+            <p class="field__hint">留空就用 onboarding@resend.dev。换自己的域名需先在 resend.com/domains 验证。</p>
+          </div>
+
+          <div class="field">
+            <label for="s-days">默认提前几天提醒</label>
+            <select id="s-days"></select>
+            <p class="field__hint">收件人没单独设置时用它。</p>
+          </div>
+
+          <div class="actions">
+            <button type="submit" class="btn btn--primary">保存</button>
+          </div>
+        </form>
+
+        <section class="panel" style="margin-top:24px">
+          <h2 class="panel__title">验证配置</h2>
+          <div class="panel__body">
+            <p id="s-summary" class="muted"></p>
+            <button type="button" id="btn-test-settings" class="btn">发送测试邮件</button>
+          </div>
+        </section>
+      </section>
+    </div>
+  </main>
+</div>
