@@ -2211,3 +2211,186 @@ def test_settings_page_shows_ready_when_configured(tmp_path):
     assert "可广播给团体所有人" in resp.text
     assert "可把私人提醒只发给你自己" in resp.text
     assert "缺 appToken" not in resp.text
+
+
+# ---------- 批量修改受众 ----------
+
+
+async def test_bulk_set_group(client, config_file):
+    """批量把勾选的记录改成团体。"""
+    resp = await client.post(
+        "/recipients/audience",
+        data={"indices": ["0", "1"], "audience": "group"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "2" in unquote(resp.headers["location"])
+
+    import yaml
+
+    recipients = yaml.safe_load(config_file.read_text(encoding="utf-8"))["recipients"]
+    assert recipients[0]["audience"] == "group"
+    assert recipients[1]["audience"] == "group"
+
+
+async def test_bulk_set_self(client, config_file):
+    """也能批量改回私人。"""
+    await client.post(
+        "/recipients/audience",
+        data={"indices": ["0", "1"], "audience": "group"},
+        follow_redirects=False,
+    )
+    resp = await client.post(
+        "/recipients/audience",
+        data={"indices": ["0"], "audience": "self"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+    import yaml
+
+    recipients = yaml.safe_load(config_file.read_text(encoding="utf-8"))["recipients"]
+    assert recipients[0]["audience"] == "self"
+    assert recipients[1]["audience"] == "group"
+
+
+async def test_bulk_preserves_other_fields_and_comments(client, config_file):
+    """批量改受众只动 audience，其余字段与文件注释都要原样保留。
+
+    这是最要紧的性质：批量操作最容易顺手把别的东西也重写了。
+    """
+    before = config_file.read_text(encoding="utf-8")
+    assert "保留这条注释用于验证" in before
+
+    await client.post(
+        "/recipients/audience",
+        data={"indices": ["0"], "audience": "group"},
+        follow_redirects=False,
+    )
+
+    after = config_file.read_text(encoding="utf-8")
+    # 注释保留
+    assert "保留这条注释用于验证" in after
+    # 其余字段保留
+    assert "zhangsan@example.com" in after
+    assert "solar_birthday: 1990-01-01" in after or "solar_birthday: '1990-01-01'" in after
+    assert "李四" in after
+
+
+async def test_bulk_rejects_unknown_audience(client, config_file):
+    before = config_file.read_text(encoding="utf-8")
+    resp = await client.post(
+        "/recipients/audience",
+        data={"indices": ["0"], "audience": "everyone"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "error=" in unquote(resp.headers["location"])
+    assert config_file.read_text(encoding="utf-8") == before
+
+
+async def test_bulk_requires_selection(client, config_file):
+    before = config_file.read_text(encoding="utf-8")
+    resp = await client.post(
+        "/recipients/audience",
+        data={"audience": "group"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "error=" in unquote(resp.headers["location"])
+    assert config_file.read_text(encoding="utf-8") == before
+
+
+async def test_bulk_skips_out_of_range_indices(client, config_file):
+    """越界索引跳过，其余照改 —— 不能因为一个失效索引让整批失败。
+
+    界面上勾选后可能有人同时删了一条。
+    """
+    resp = await client.post(
+        "/recipients/audience",
+        data={"indices": ["0", "99"], "audience": "group"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+    import yaml
+
+    recipients = yaml.safe_load(config_file.read_text(encoding="utf-8"))["recipients"]
+    assert recipients[0]["audience"] == "group"
+
+
+async def test_bulk_no_change_is_reported_honestly(client, config_file):
+    """已经是目标受众时如实说"无需改动"，不说"成功"。"""
+    await client.post(
+        "/recipients/audience",
+        data={"indices": ["0"], "audience": "group"},
+        follow_redirects=False,
+    )
+    resp = await client.post(
+        "/recipients/audience",
+        data={"indices": ["0"], "audience": "group"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "无需改动" in unquote(resp.headers["location"])
+
+
+async def test_bulk_group_warns_about_broadcast(client):
+    """改成团体时要提示"会广播给所有人" —— 后果不可撤销。"""
+    resp = await client.post(
+        "/recipients/audience",
+        data={"indices": ["0"], "audience": "group"},
+        follow_redirects=False,
+    )
+    assert "广播" in unquote(resp.headers["location"])
+
+
+def test_repository_rejects_bad_audience(tmp_path):
+    """仓储层自己也要挡住非法受众，不能只靠路由校验。"""
+    from src.web.repository import ConfigRepository
+
+    path = tmp_path / "c.yml"
+    path.write_text(
+        "notification:\n  resend:\n    api_key: re_x\n  start_notification: resend\n"
+        "recipients:\n  - name: A\n    solar_birthday: 1990-01-01\n",
+        encoding="utf-8",
+    )
+    repo = ConfigRepository(str(path))
+    with pytest.raises(ValueError):
+        repo.set_audience_many([0], "everyone")
+
+
+def test_repository_bulk_empty_selection_is_noop(tmp_path):
+    from src.web.repository import ConfigRepository
+
+    path = tmp_path / "c.yml"
+    path.write_text(
+        "notification:\n  resend:\n    api_key: re_x\n  start_notification: resend\n"
+        "recipients:\n  - name: A\n    solar_birthday: 1990-01-01\n",
+        encoding="utf-8",
+    )
+    repo = ConfigRepository(str(path))
+    assert repo.set_audience_many([], "group") == 0
+
+
+def test_bulk_route_precedes_dynamic_route():
+    """回归：``/recipients/audience`` 必须注册在 ``/recipients/{index}`` **之前**。
+
+    FastAPI 按注册顺序匹配路由。顺序反了的话 ``audience`` 会被当成 ``index``
+    去解析成整数，返回 422 —— 界面上表现为"点批量按钮没反应"，
+    而且报错信息是英文的 422，很难联想到是路由顺序问题。
+    """
+    from src.web.app import create_app
+
+    app = create_app(str(REPO_ROOT / "config.example.yml"))
+    paths = [
+        r.path
+        for r in app.routes
+        if hasattr(r, "methods") and "POST" in getattr(r, "methods", set())
+    ]
+    assert "/recipients/audience" in paths, "批量路由没了"
+    assert "/recipients/{index}" in paths
+
+    assert paths.index("/recipients/audience") < paths.index("/recipients/{index}"), (
+        "批量路由必须排在动态路由之前，否则会被 {index} 吃掉"
+    )

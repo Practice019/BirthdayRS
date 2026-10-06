@@ -384,3 +384,16 @@ code, .mono { font-family: var(--font-mono); font-size: 0.92em; }
 .advanced > summary { cursor: pointer; font-size: 13px; color: var(--muted); }
 .advanced[open] > summary { color: var(--ink); }
 .advanced .field { margin-top: 16px; }
+
+/* 时间轴批量操作，同 web 版 */
+.tbl__check { width: 36px; text-align: center; }
+.tbl__check input { width: auto; min-height: 0; margin: 0; cursor: pointer; }
+.bulkbar {
+  position: sticky; bottom: 16px; z-index: 10;
+  display: flex; align-items: center; gap: 8px;
+  margin: 0 0 12px; padding: 8px 12px;
+  background: var(--paper); border: 1px solid var(--line-strong);
+  border-radius: var(--radius); box-shadow: 0 2px 12px rgba(31,35,40,.16);
+}
+.bulkbar__count { font-size: 13px; }
+.bulkbar__label { font-size: 13px; color: var(--muted); margin-left: 8px; }

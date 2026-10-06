@@ -39,10 +39,31 @@
       <a class="btn btn--primary" href="/recipients/new">添加收件人</a>
     </section>
   {% else %}
+    {# 批量改受众。用 form 包住整张表，勾选与操作条都在这一个表单里 ——
+       分成两个表单的话，勾选框的值传不到提交按钮那边。 #}
+    <form method="post" action="/recipients/audience" id="bulk-form">
+    <div class="bulkbar" id="bulkbar" hidden>
+      <span class="bulkbar__count"><strong id="bulk-count">0</strong> 条已选</span>
+      <span class="bulkbar__label">设为</span>
+      <button type="submit" class="btn btn--sm" name="audience" value="self">
+        只发给我自己
+      </button>
+      <button type="submit" class="btn btn--sm btn--danger"
+              name="audience" value="group"
+              data-confirm="设为「团体」后，这些人过生日时会广播给推送应用里的所有人，消息发出去收不回来。确定吗？">
+        发给团体所有人
+      </button>
+      <button type="button" class="btn btn--sm" id="bulk-clear">取消选择</button>
+    </div>
+
     <table class="tbl">
       <caption class="sr-only">收件人与下一次生日</caption>
       <thead>
         <tr>
+          <th scope="col" class="tbl__check">
+            <input type="checkbox" id="bulk-all"
+                   aria-label="全选" title="全选">
+          </th>
           <th scope="col">姓名</th>
           <th scope="col">生日</th>
           <th scope="col">下一次</th>
@@ -54,6 +75,10 @@
       <tbody>
         {% for r in timeline %}
           <tr class="row row--{{ r.status }}">
+            <td data-label="选择" class="tbl__check">
+              <input type="checkbox" name="indices" value="{{ r.index }}"
+                     class="bulk-check" aria-label="选择 {{ r.name }}">
+            </td>
             <td data-label="姓名">
               <span class="name">{{ r.name }}</span>
               {% if r.audience == 'group' %}
@@ -122,6 +147,7 @@
         {% endfor %}
       </tbody>
     </table>
+    </form>
   {% endif %}
 {% endblock %}
 

@@ -26,12 +26,23 @@
 
         <section id="meta" class="meta" aria-label="通知配置"></section>
 
+        <div class="bulkbar hidden" id="bulkbar">
+          <span class="bulkbar__count"><strong id="bulk-count">0</strong> 条已选</span>
+          <span class="bulkbar__label">设为</span>
+          <button type="button" class="btn btn--sm" id="bulk-self">只发给我自己</button>
+          <button type="button" class="btn btn--sm btn--danger" id="bulk-group">发给团体所有人</button>
+          <button type="button" class="btn btn--sm" id="bulk-clear">取消选择</button>
+        </div>
+
         <table id="timeline-table" class="tbl">
           <caption style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">
             收件人与下一次生日
           </caption>
           <thead>
             <tr>
+              <th scope="col" class="tbl__check">
+                <input type="checkbox" id="bulk-all" aria-label="全选" title="全选">
+              </th>
               <th scope="col">姓名</th>
               <th scope="col">生日</th>
               <th scope="col">下一次</th>

@@ -145,10 +145,25 @@
     data.recipients.forEach(function (r) {
       tbody.appendChild(buildRow(r));
     });
+
+    // 重新渲染后旧的勾选已经失效，重置操作条避免"选了 3 条"其实是过去的行
+    refreshBulkBar();
   }
 
   function buildRow(r) {
     var tr = el('tr', 'row row--' + r.status);
+
+    // 选择框（批量改受众用）
+    var tdCheck = el('td', 'tbl__check');
+    tdCheck.setAttribute('data-label', '选择');
+    var box = document.createElement('input');
+    box.type = 'checkbox';
+    box.className = 'bulk-check';
+    box.value = String(r.index);
+    box.setAttribute('aria-label', '选择 ' + r.name);
+    box.addEventListener('change', refreshBulkBar);
+    tdCheck.appendChild(box);
+    tr.appendChild(tdCheck);
 
     // 姓名 + 备注
     var tdName = el('td', null);
@@ -428,6 +443,74 @@
     solarTimer = setTimeout(function () { runSolarCheck(value); }, 220);
   }
 
+  /* ---------- 批量改受众 ---------- */
+
+  function bulkBoxes() {
+    return Array.prototype.slice.call($$('#timeline-body .bulk-check'));
+  }
+
+  function refreshBulkBar() {
+    var boxes = bulkBoxes();
+    var picked = boxes.filter(function (b) { return b.checked; });
+    var bar = $('#bulkbar');
+    var count = $('#bulk-count');
+    if (!bar) { return; }
+    if (count) { count.textContent = String(picked.length); }
+    // 没选时不显示：它贴底浮着，空着只会挡内容
+    bar.classList.toggle('hidden', picked.length === 0);
+
+    var all = $('#bulk-all');
+    if (all) {
+      all.checked = picked.length === boxes.length && boxes.length > 0;
+      all.indeterminate = picked.length > 0 && picked.length < boxes.length;
+    }
+  }
+
+  function applyAudience(audience) {
+    if (!requireApi()) { return; }
+    var picked = bulkBoxes().filter(function (b) { return b.checked; });
+    if (!picked.length) { return; }
+
+    if (audience === 'group') {
+      var ok = window.confirm(
+        '设为「团体」后，这 ' + picked.length + ' 人过生日时会广播给推送应用里的所有人，'
+        + '消息发出去收不回来。确定吗？');
+      if (!ok) { return; }
+    }
+
+    call('set_audience_bulk', picked.map(function (b) { return Number(b.value); }), audience)
+      .then(function (res) {
+        if (!res) { return; }
+        if (!res.ok) {
+          setFlash('err', res.error || '保存失败');
+          return;
+        }
+        setFlash('ok', res.notice || '已保存');
+        refreshTimeline();
+      });
+  }
+
+  function initBulkBar() {
+    var all = $('#bulk-all');
+    if (all) {
+      all.addEventListener('change', function () {
+        bulkBoxes().forEach(function (b) { b.checked = all.checked; });
+        refreshBulkBar();
+      });
+    }
+    var clear = $('#bulk-clear');
+    if (clear) {
+      clear.addEventListener('click', function () {
+        bulkBoxes().forEach(function (b) { b.checked = false; });
+        refreshBulkBar();
+      });
+    }
+    var selfBtn = $('#bulk-self');
+    if (selfBtn) { selfBtn.addEventListener('click', function () { applyAudience('self'); }); }
+    var groupBtn = $('#bulk-group');
+    if (groupBtn) { groupBtn.addEventListener('click', function () { applyAudience('group'); }); }
+  }
+
   /* ---------- 预览 ---------- */
 
   function openPreview(index) {
@@ -678,6 +761,7 @@
     });
 
     on('#btn-add', 'click', function () { openForm(null); });
+    initBulkBar();
     on('#recipient-form', 'submit', submitForm);
     on('#settings-form', 'submit', submitSettings);
     on('#btn-test-settings', 'click', testSettingsSend);

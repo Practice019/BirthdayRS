@@ -22,7 +22,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
 
 from src.core.config_manager import ConfigManager
-from src.core.config import Recipient
+from src.core.config import AUDIENCE_LABELS, AUDIENCES, Recipient
 from src.core.notification_factory import NotificationFactory
 from src.notification.sender_wxpusher import clear_followers_cache
 from src.web.auth import TokenAuthMiddleware
@@ -597,6 +597,49 @@ def create_app(config_path: Optional[str] = None, token: Optional[str] = None) -
             "next_solar_birthday": nxt_solar.isoformat() if nxt_solar else None,
             "hint": "",
         }
+
+    @app.post("/recipients/audience")
+    async def set_audience_bulk(request: Request) -> RedirectResponse:
+        """批量把勾选的记录改成某个受众。
+
+        **这是有后果的操作**：把记录标成"团体"意味着下次它过生日时会广播给
+        推送应用里的所有人，而消息发出去收不回来。所以：
+        - 表单里的索引要重新查一遍，越界的跳过（可能有人并行删了条目）
+        - 返回时如实说改了几条，不说"成功"这种含糊话
+        """
+        form = await request.form()
+        raw_indices = form.getlist("indices")
+        audience = (form.get("audience") or "").strip()
+
+        if audience not in AUDIENCES:
+            return RedirectResponse("/?error=请选择要设成哪个受众", status_code=303)
+        if not raw_indices:
+            return RedirectResponse("/?error=没有勾选任何记录", status_code=303)
+
+        try:
+            indices = [int(i) for i in raw_indices]
+        except (TypeError, ValueError):
+            return RedirectResponse("/?error=勾选的数据不对，请重试", status_code=303)
+
+        try:
+            changed = repo.set_audience_many(indices, audience)
+        except Exception as exc:
+            logger.exception("批量修改受众失败")
+            return RedirectResponse(f"/?error=保存失败：{exc}", status_code=303)
+
+        if changed == 0:
+            return RedirectResponse(
+                f"/?notice=勾选的 {len(indices)} 条已经是这个设置，无需改动", status_code=303
+            )
+
+        label = AUDIENCE_LABELS.get(audience, audience)
+        skipped = len(indices) - changed
+        note = f"已把 {changed} 条改为「{label}」"
+        if skipped:
+            note += f"（{skipped} 条无需改动或已不存在）"
+        if audience == "group":
+            note += "。注意：它们下次过生日会广播给所有人"
+        return RedirectResponse(f"/?notice={note}", status_code=303)
 
     @app.post("/recipients/{index}")
     async def update_recipient(request: Request, index: int) -> HTMLResponse:

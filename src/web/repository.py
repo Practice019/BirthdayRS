@@ -19,6 +19,8 @@ from typing import Any, Dict, List, Optional
 
 from ruamel.yaml import YAML
 
+from src.core.config import AUDIENCES
+
 logger = logging.getLogger(__name__)
 
 # 收件人允许出现的字段。写入时会按此白名单过滤，避免表单夹带意外键进配置。
@@ -433,6 +435,39 @@ class ConfigRepository:
             merged.update(self._clean(values))
             recipients[index] = merged
             self._save(data)
+
+    def set_audience_many(self, indices, audience: str) -> int:
+        """批量把若干条记录的受众改成 ``audience``，返回实际改动条数。
+
+        **只动 ``audience`` 这一个键**，其余字段与文件里的注释原样保留 ——
+        批量操作最怕"顺手把别的字段也重写了"。仓储层的 ruamel round-trip
+        本来就保注释，这里只要不整体替换每个条目就行。
+
+        越界的索引**静默跳过**而不是报错：界面上勾选后可能有人同时删了一条，
+        剩下那些仍然该被改；因为一个失效索引让整批失败更糟。
+        """
+        if audience not in AUDIENCES:
+            raise ValueError(f"受众只能是 {' 或 '.join(AUDIENCES)}，收到：{audience!r}")
+
+        wanted = sorted({int(i) for i in indices})
+        if not wanted:
+            return 0
+
+        with self._lock:
+            data = self._load()
+            recipients = data.get("recipients") or []
+            changed = 0
+            for index in wanted:
+                if not 0 <= index < len(recipients):
+                    continue
+                item = recipients[index]
+                if item.get("audience") == audience:
+                    continue
+                item["audience"] = audience
+                changed += 1
+            if changed:
+                self._save(data)
+            return changed
 
     def delete_recipient(self, index: int) -> str:
         """按索引删除，返回被删者的姓名（用于提示文案）。"""

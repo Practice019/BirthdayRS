@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import ValidationError
 
-from src.core.config import Recipient
+from src.core.config import AUDIENCE_LABELS, AUDIENCES, Recipient
 from src.core.config_manager import ConfigManager
 from src.core.notification_factory import NotificationFactory
 from src.web.domain import (
@@ -256,6 +256,38 @@ class AppApi:
         except Exception as exc:
             logger.exception("写入配置失败")
             return {"ok": False, "error": f"保存失败：{exc}"}
+
+    def set_audience_bulk(self, indices: List[int], audience: str) -> Dict[str, Any]:
+        """批量把若干条记录的受众改成 ``audience``。与 web 版同一套口径。"""
+        if audience not in AUDIENCES:
+            return {"ok": False, "error": "请选择要设成哪个受众"}
+        if not indices:
+            return {"ok": False, "error": "没有勾选任何记录"}
+
+        try:
+            changed = self._repo.set_audience_many(indices, audience)
+        except Exception as exc:
+            logger.exception("批量修改受众失败")
+            return {"ok": False, "error": f"保存失败：{exc}"}
+
+        # 配置已变，刷新进程内对象
+        try:
+            self._refresh_config()
+        except Exception as exc:
+            logger.exception("重新加载配置失败")
+            return {"ok": False, "error": f"已写入，但重新加载失败：{exc}"}
+
+        label = AUDIENCE_LABELS.get(audience, audience)
+        if changed == 0:
+            return {"ok": True, "notice": f"勾选的 {len(indices)} 条已经是这个设置，无需改动"}
+
+        note = f"已把 {changed} 条改为「{label}」"
+        skipped = len(indices) - changed
+        if skipped:
+            note += f"（{skipped} 条无需改动或已不存在）"
+        if audience == "group":
+            note += "。注意：它们下次过生日会广播给所有人"
+        return {"ok": True, "notice": note}
 
     def delete_recipient(self, index: int) -> Dict[str, Any]:
         try:

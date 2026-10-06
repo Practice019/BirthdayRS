@@ -181,3 +181,59 @@ document.querySelectorAll('form.js-test-send').forEach(function (form) {
     refresh();
   }
 })();
+
+/* 时间轴的批量选择：勾选任意一条后浮现操作条，用于批量改受众。
+   禁用 JS 时勾选框仍然可用（能选中、能提交），只是少了计数与"全选"的联动 ——
+   所以这里只做增强，不做拦截。 */
+(function () {
+  var form = document.getElementById('bulk-form');
+  var bar = document.getElementById('bulkbar');
+  if (!form || !bar) {
+    return;
+  }
+
+  var boxes = Array.prototype.slice.call(form.querySelectorAll('.bulk-check'));
+  var countEl = document.getElementById('bulk-count');
+  var allBox = document.getElementById('bulk-all');
+  var clearBtn = document.getElementById('bulk-clear');
+
+  function refresh() {
+    var picked = boxes.filter(function (b) { return b.checked; });
+    countEl.textContent = String(picked.length);
+    // 一条都没选时收起操作条：它浮在页面底部，空着只会挡内容
+    bar.hidden = picked.length === 0;
+
+    if (allBox) {
+      allBox.checked = picked.length === boxes.length && boxes.length > 0;
+      // indeterminate 表示"选了一部分"，这是勾选框的标准表意
+      allBox.indeterminate = picked.length > 0 && picked.length < boxes.length;
+    }
+  }
+
+  boxes.forEach(function (b) { b.addEventListener('change', refresh); });
+
+  if (allBox) {
+    allBox.addEventListener('change', function () {
+      boxes.forEach(function (b) { b.checked = allBox.checked; });
+      refresh();
+    });
+  }
+
+  if (clearBtn) {
+    clearBtn.addEventListener('click', function () {
+      boxes.forEach(function (b) { b.checked = false; });
+      refresh();
+    });
+  }
+
+  // 改成「团体」的后果不可撤销，提交前确认一次
+  form.querySelectorAll('[data-confirm]').forEach(function (btn) {
+    btn.addEventListener('click', function (event) {
+      if (!window.confirm(btn.getAttribute('data-confirm'))) {
+        event.preventDefault();
+      }
+    });
+  });
+
+  refresh();
+})();
