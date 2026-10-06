@@ -9,8 +9,12 @@
 #
 #   2) 常驻 Web 管理台（有端口，适合局域网访问）
 #      docker compose --profile web up -d
+#      管理台默认要求访问令牌，启动后取地址：
+#      docker compose logs birthdayrs-web | grep token
 #
 # config.yml 用挂载而不是烘进镜像 —— 它含授权码与 API Key。
+# 挂的是 ./data 整个**目录**（配置放 data/config.yml），不是单个文件：
+# 单文件挂载会让界面里的写操作失败，详见 web 服务下的注释。
 # =============================================================================
 
 services:
@@ -23,11 +27,10 @@ services:
     environment:
       TZ: Asia/Shanghai
     volumes:
-      - ./config.yml:/app/config.yml:ro
-      # CLI 的日志写在**工作目录**（/app/birthday_reminder.log），
-      # 所以要挂文件本身或整个 /app 的日志文件，挂目录名不能对上。
-      - ./birthday_reminder.log:/app/birthday_reminder.log
-    command: ["run", "--config", "/app/config.yml"]
+      # 挂目录，理由见下面 web 服务的说明（单文件挂载会挡住原子写）
+      - ./data:/app/data
+    working_dir: /app/data
+    command: ["run", "--config", "/app/data/config.yml"]
     restart: "no"
 
   # ---- 常驻 Web 管理台（可选，需 --profile web 才启动）----
@@ -42,11 +45,18 @@ services:
     profiles: ["web"]
     environment:
       TZ: Asia/Shanghai
+      # 固定访问令牌，容器重启后浏览器里的书签与 cookie 不失效。
+      # 不设也行 —— 那样每次启动随机生成，用 `docker logs` 取新地址。
+      # BIRTHDAYRS_TOKEN: "换成一串你自己的随机字符串"
     volumes:
-      # 这个服务要写配置（改设置、增删收件人），因此不能只读挂载
-      - ./config.yml:/app/config.yml
-      - ./birthday_reminder.log:/app/birthday_reminder.log
-    command: ["web", "--config", "/app/config.yml", "--host", "0.0.0.0", "--port", "8000"]
+      # 挂**目录**而不是单个 config.yml 文件。
+      # 单文件挂载会让 web 界面的写操作失败：仓储层用「临时文件 + os.replace()」
+      # 原子替换（见 src/web/repository.py），而绑定挂载的单文件无法被 rename 覆盖，
+      # 会抛 OSError: [Errno 16] Device or resource busy —— 表现为增删收件人一律 500。
+      - ./data:/app/data
+    # 工作目录设成挂载点：CLI 把日志写在**工作目录**下，这样日志也一起持久化。
+    working_dir: /app/data
+    command: ["web", "--config", "/app/data/config.yml", "--host", "0.0.0.0", "--port", "8000"]
     ports:
       - "127.0.0.1:8000:8000"   # 只绑本机；要对局域网开放改成 "8000:8000"
     restart: unless-stopped

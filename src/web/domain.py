@@ -105,6 +105,12 @@ class RecipientView:
     solar_invalid: bool = False
     #: 使用者自己写的备注（这个人的相关信息）。只在自己界面看，不进通知正文。
     note: Optional[str] = None
+    #: 提醒窗口是否来自全局默认值（配置里没单独给这个人写 ``reminder_days``）。
+    #: 界面上要能区分"我给他单独设了 3 天"和"他跟着全局默认走"。
+    reminder_days_inherited: bool = False
+    #: 提醒发给谁看：``self``（只发给我）或 ``group``（发给团体所有人）。
+    #: 时间轴上必须能看出来 —— 广播给团体是不可撤销的，混在一起很容易发错。
+    audience: str = "self"
 
     @property
     def solar_valid(self) -> bool:
@@ -348,6 +354,9 @@ def build_recipient_view(
 ) -> RecipientView:
     """计算单个收件人的下一次生日。"""
     reminder_days = _reminder_days(raw, default_reminder_days)
+    # 配置里没写 = 跟着全局默认走。界面上要标出来，否则使用者分不清
+    # "这个人的 3 天" 是单独设的还是继承来的。
+    reminder_days_inherited = raw.get("reminder_days") is None
     solar = raw.get("solar_birthday")
     configured_lunar = raw.get("lunar_birthday")
 
@@ -382,6 +391,8 @@ def build_recipient_view(
                 configured_lunar and derived_lunar and configured_lunar != derived_lunar
             ),
             "solar_invalid": bool(solar) and not solar_date,
+            "reminder_days_inherited": reminder_days_inherited,
+            "audience": (raw.get("audience") or "self"),
         }
         data.update(overrides)
         return RecipientView(**data)
@@ -517,17 +528,17 @@ def render_preview(
         email_error = f"渲染邮件模板失败：{type(exc).__name__}"
 
     try:
-        serverchan_text = ServerChanSender("preview").render_content(
+        push_text = ServerChanSender("preview").render_content(
             recipient.name, template_file, extra
         )
     except Exception:
-        serverchan_text = None
+        push_text = None
 
     return {
         "ok": True,
         "email_html": email_html,
         "email_error": email_error,
-        "serverchan_text": serverchan_text,
+        "push_text": push_text,
         "days_until": extra["days_until"],
         "age": extra["age"],
     }

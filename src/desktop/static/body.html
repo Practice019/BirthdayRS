@@ -68,7 +68,8 @@
           <div class="field">
             <label for="f-solar">身份证出生年月日 <span class="req" aria-hidden="true">*</span></label>
             <div class="input-group">
-              <input id="f-solar" type="text" class="mono" placeholder="1990-01-20"
+              <input id="f-solar" type="text" class="mono" placeholder="19900120"
+                     inputmode="numeric"
                      autocomplete="off" spellcheck="false">
               <span id="solar-status" class="input-status" data-state="empty" aria-live="polite">
                 <span class="input-status__icon" aria-hidden="true"></span>
@@ -83,9 +84,21 @@
 
           <div class="field">
             <label for="f-reminder_days">提前几天提醒</label>
-            <input id="f-reminder_days" type="number" min="0" max="365" value="3"
+            <input id="f-reminder_days" type="number" min="0" max="365" placeholder="默认"
                    style="max-width:180px">
-            <p class="field__hint">0 表示只在生日当天提醒</p>
+            <p class="field__hint">留空就用设置里的默认值；填 0 表示只在生日当天提醒。</p>
+          </div>
+
+          <div class="field">
+            <label for="f-audience">这条提醒发给谁</label>
+            <select id="f-audience" style="max-width:240px">
+              <option value="self">只发给我自己</option>
+              <option value="group">发给团体所有人</option>
+            </select>
+            <p class="field__hint">
+              互相认识的团体选"发给团体所有人"，会广播给推送应用里所有关注者；
+              私人朋友选"只发给我自己"。
+            </p>
           </div>
 
           <div class="field">
@@ -128,10 +141,91 @@
       <section id="view-settings" class="hidden">
         <div class="pagehead">
           <h1>设置</h1>
-          <p>提醒是发给<strong>你自己</strong>的，不是发给收件人。这里填好之后，到时间就会发到这个邮箱。</p>
+          <p>提醒是发给<strong>你自己</strong>的，不是发给收件人。填好之后，到时间就会发到下面的邮箱和手机。</p>
         </div>
 
         <form id="settings-form" class="form" novalidate style="max-width:680px">
+
+          <fieldset class="fieldset">
+            <legend>用哪些方式提醒我</legend>
+            <p class="field__hint" style="margin-top:0">勾选的方式会同时发送。至少留一个，否则提醒发不出去。</p>
+            <label class="check">
+              <input type="checkbox" id="s-enable-resend" value="resend">
+              <span>邮件（Resend）</span>
+            </label>
+            <label class="check">
+              <input type="checkbox" id="s-enable-wxpusher" value="wxpusher">
+              <span>手机推送（WxPusher）</span>
+            </label>
+            <p id="s-enable-err" class="field__err hidden"></p>
+          </fieldset>
+
+          <fieldset class="fieldset">
+            <legend>手机推送</legend>
+            <p class="field__hint" style="margin-top:0">
+              两种用法可以同时配：<strong>应用</strong>负责把团体成员的生日广播给所有人，
+              <strong>推送令牌</strong>负责把私人朋友的提醒只发给你自己。
+            </p>
+
+            <div class="field">
+              <label for="s-app-token">应用密钥（appToken）</label>
+              <div class="input-group" style="grid-template-columns:1fr auto auto">
+                <input id="s-app-token" type="text" class="mono" autocomplete="off" spellcheck="false"
+                       placeholder="AT_开头的密钥（留空则不修改）">
+                <span id="s-app-token-status" class="input-status hidden" data-state="ok">
+                  <span class="input-status__icon" aria-hidden="true"></span>
+                  <span class="input-status__text mono" id="s-app-token-mask"></span>
+                </span>
+                <button type="button" id="s-app-token-change" class="btn btn--sm hidden">更换</button>
+              </div>
+              <p class="field__hint">
+                在 wxpusher.zjiecode.com/admin 创建应用后，从 appToken 页面复制。
+                有它才能把「发给团体所有人」的提醒广播出去。
+              </p>
+              <p id="s-app-token-err" class="field__err hidden"></p>
+              <label id="s-clear-app-token-wrap" class="check hidden">
+                <input type="checkbox" id="s-clear-app-token">
+                <span>清除已保存的应用密钥</span>
+              </label>
+            </div>
+
+            <div class="field">
+              <label for="s-self-uid">你自己的 UID</label>
+              <input id="s-self-uid" type="text" class="mono" autocomplete="off" spellcheck="false"
+                     placeholder="UID_开头，在应用后台的用户列表里">
+              <p class="field__hint">
+                有它才能把「只发给我自己」的私人提醒定向发出来（否则会广播给所有人）。
+              </p>
+              <p id="s-self-uid-err" class="field__err hidden"></p>
+            </div>
+
+            <details class="advanced">
+              <summary>只想发给自己、不想建应用？</summary>
+              <div class="field">
+              <label for="s-spt">WxPusher 推送令牌（SPT）</label>
+              <div class="input-group" style="grid-template-columns:1fr auto auto">
+                <input id="s-spt" type="text" class="mono" autocomplete="off" spellcheck="false"
+                       placeholder="SPT_开头的令牌（留空则不修改）">
+                <span id="s-spt-status" class="input-status hidden" data-state="ok">
+                  <span class="input-status__icon" aria-hidden="true"></span>
+                  <span class="input-status__text mono" id="s-spt-mask"></span>
+                </span>
+                <button type="button" id="s-spt-change" class="btn btn--sm hidden">更换</button>
+              </div>
+              <p class="field__hint">
+                在 wxpusher.zjiecode.com 扫码得到 SPT，再在手机装上它的 App 用同一个微信登录即可收到。
+              </p>
+              <p id="s-spt-err" class="field__err hidden"></p>
+              <label id="s-clear-spt-wrap" class="check hidden">
+                <input type="checkbox" id="s-clear-spt">
+                <span>清除已保存的推送令牌</span>
+              </label>
+              </div>
+            </details>
+          </fieldset>
+
+          <fieldset class="fieldset">
+            <legend>邮件</legend>
           <div class="field">
             <label for="s-key">Resend API Key</label>
             <div class="input-group" style="grid-template-columns:1fr auto auto">
@@ -144,6 +238,7 @@
               <button type="button" id="s-key-change" class="btn btn--sm hidden">更换</button>
             </div>
             <p class="field__hint">在 resend.com/api-keys 创建。密钥只保存在本机 config.yml。</p>
+            <p id="s-key-err" class="field__err hidden"></p>
             <label id="s-clear-key-wrap" class="check hidden">
               <input type="checkbox" id="s-clear-key">
               <span>清除已保存的密钥</span>
@@ -151,9 +246,10 @@
           </div>
 
           <div class="field">
-            <label for="s-receive">接收提醒的邮箱 <span class="req" aria-hidden="true">*</span></label>
+            <label for="s-receive">接收提醒的邮箱</label>
             <input id="s-receive" type="text" inputmode="email" placeholder="you@qq.com">
-            <p class="field__hint">提醒就发到这里，填你自己的邮箱。</p>
+            <p class="field__hint">提醒就发到这里，填你自己的邮箱。只开手机推送时可以不填。</p>
+            <p id="s-receive-err" class="field__err hidden"></p>
           </div>
 
           <div class="field">
@@ -167,12 +263,16 @@
             <input id="s-from-email" type="text" class="mono" placeholder="onboarding@resend.dev">
             <p class="field__hint">留空就用 onboarding@resend.dev。换自己的域名需先在 resend.com/domains 验证。</p>
           </div>
+          </fieldset>
 
-          <div class="field">
-            <label for="s-days">默认提前几天提醒</label>
-            <select id="s-days"></select>
-            <p class="field__hint">收件人没单独设置时用它。</p>
-          </div>
+          <fieldset class="fieldset">
+            <legend>提醒时机</legend>
+            <div class="field">
+              <label for="s-days">默认提前几天提醒</label>
+              <select id="s-days"></select>
+              <p class="field__hint">收件人没单独设置时用它。</p>
+            </div>
+          </fieldset>
 
           <div class="actions">
             <button type="submit" class="btn btn--primary">保存</button>
@@ -183,7 +283,7 @@
           <h2 class="panel__title">验证配置</h2>
           <div class="panel__body">
             <p id="s-summary" class="muted"></p>
-            <button type="button" id="btn-test-settings" class="btn">发送测试邮件</button>
+            <button type="button" id="btn-test-settings" class="btn">发送测试提醒</button>
           </div>
         </section>
       </section>

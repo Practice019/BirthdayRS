@@ -83,7 +83,14 @@ class BirthdayChecker:
                 'solar_term': '',       # 节气
                 'age': 0,
                 'week_name': '',        # 星期
-                'constellation': ''     # 星座
+                'constellation': '',    # 星座
+                # 邮件模板用它们拼「今天 YYYY-MM-DD 星期X」那一行。
+                # 它们一直在下面算出来了，只是忘了放进 extra_info ——
+                # 于是 run 命令渲染邮件时抛 UndefinedError: 'year' is undefined，
+                # 而推送渠道不看这几个字段，所以只在发邮件时才炸。
+                'year': 0,
+                'month': 0,
+                'day': 0,
             }
 
             # 获取今天的详细信息
@@ -93,6 +100,9 @@ class BirthdayChecker:
 
             # 填充当天信息
             extra_info.update({
+                'year': year,
+                'month': month,
+                'day': day,
                 'gz_year': today_lunar.getYearInGanZhi(),
                 'gz_month': today_lunar.getMonthInGanZhi(),
                 'gz_day': today_lunar.getDayInGanZhi(),

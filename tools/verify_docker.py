@@ -32,6 +32,20 @@ def check(label: str, passed: bool, detail: str = "") -> None:
     RESULTS.append((label, passed, detail))
 
 
+def find_config() -> Path:
+    """找一个可用的 config.yml 来做界面自检。
+
+    compose 把配置放在 ``data/config.yml``（挂目录而非单文件，见 compose 注释）；
+    本地开发则习惯放在仓库根。两处都找，找不到就报出来。
+    """
+    for candidate in (ROOT / "data" / "config.yml", ROOT / "config.yml"):
+        if candidate.exists():
+            return candidate
+    raise FileNotFoundError(
+        "找不到 config.yml：请先 `cp config.example.yml data/config.yml` 或放在仓库根"
+    )
+
+
 # ---------------------------------------------------------------- 1. 依赖隔离
 
 def check_gui_isolation() -> None:
@@ -90,7 +104,7 @@ def check_web_ui_without_gui() -> None:
 
         from src.web.app import create_app
 
-        app = create_app(str(ROOT / "config.yml"))
+        app = create_app(str(find_config()))
         client = TestClient(app)
 
         for path, needle in [
@@ -105,6 +119,20 @@ def check_web_ui_without_gui() -> None:
         resp = client.get("/static/style.css")
         check("Web 静态资源可用", resp.status_code == 200 and len(resp.text) > 1000,
               f"HTTP {resp.status_code}, {len(resp.text)} bytes")
+
+        # 访问令牌：容器里默认开启，必须能在无 GUI 的环境下工作
+        token = "verify-token-abcdefghijklmnopqrstuvwxyz"
+        authed = TestClient(create_app(str(find_config()), token=token))
+
+        resp = authed.get("/")
+        check("无令牌访问被拒绝", resp.status_code == 401,
+              f"HTTP {resp.status_code}")
+
+        resp = authed.get(f"/?token={token}")
+        check("带令牌可访问", resp.status_code == 200 and "时间轴" in resp.text,
+              f"HTTP {resp.status_code}")
+        check("带令牌后换发 cookie", authed.cookies.get("birthdayrs_token") == token,
+              str(dict(authed.cookies)))
     finally:
         builtins.__import__ = real_import
 
@@ -181,8 +209,11 @@ def check_compose_matches_dockerfile() -> None:
     compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
     check("compose 有 web profile", "profiles:" in compose and "web" in compose)
     check("compose 映射 8000 端口", "8000:8000" in compose)
-    check("compose 用挂载注入 config.yml（不打进镜像）",
-          "./config.yml:/app/config.yml" in compose)
+    check("compose 用挂载注入配置（不打进镜像）",
+          "./data:/app/data" in compose)
+    # 单文件挂载会让 os.replace() 抛 EBUSY，界面写不了配置。
+    check("compose 挂目录而非单个 config.yml 文件",
+          ":/app/config.yml" not in compose, "挂单文件会让界面写操作 500")
     check("compose 设置时区", "TZ" in compose)
 
 

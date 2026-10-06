@@ -92,8 +92,12 @@ async def test_new_form_renders(client):
     resp = await client.get("/recipients/new")
     assert resp.status_code == 200
     assert 'id="name"' in resp.text
-    # 默认提前天数来自配置
-    assert 'value="3"' in resp.text
+    # 提前天数默认留空 = 继承全局默认（不把全局值固化到这个人身上）。
+    assert 'name="reminder_days"' in resp.text
+    assert 'value=""' in resp.text
+    # 全局默认值作为提示出现在说明里，使用者能看到留空会是多少
+    assert "留空就用设置里的默认值（当前 3 天）" in resp.text
+    assert 'placeholder="3"' in resp.text
 
 
 async def test_create_recipient_writes_config(client, config_file):
@@ -121,6 +125,122 @@ async def test_create_recipient_writes_config(client, config_file):
     assert "保留这条注释用于验证" in saved
 
 
+async def test_reminder_days_blank_means_inherit(client, config_file):
+    """留空 = 不单独设置：配置里不写这个键，运行时用全局默认。
+
+    这是常态用法。曾经留空会被折叠成 0（只在当天提醒），等于静默改变了行为。
+    """
+    resp = await client.post(
+        "/recipients",
+        data={"name": "继承默认", "solar_birthday": "1990-05-05", "reminder_days": ""},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+    saved = config_file.read_text(encoding="utf-8")
+    assert "继承默认" in saved
+    # 这个人的条目里不该出现 reminder_days —— 写了值就等于把默认值固化到他身上。
+    # 注意不能直接搜字符串：notification 段里的 default_reminder_days 含同样的子串。
+    import yaml
+
+    recipients = yaml.safe_load(saved)["recipients"]
+    created = [r for r in recipients if r["name"] == "继承默认"]
+    assert len(created) == 1
+    assert "reminder_days" not in created[0]
+
+
+async def test_reminder_days_explicit_zero_is_kept(client, config_file):
+    """显式填 0 要真的写 0 —— 0 是「只在生日当天提醒」，与「不设置」是两回事。"""
+    resp = await client.post(
+        "/recipients",
+        data={"name": "当天提醒", "solar_birthday": "1990-05-05", "reminder_days": "0"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "reminder_days: 0" in config_file.read_text(encoding="utf-8")
+
+
+async def test_edit_form_blank_when_not_individually_set(client, config_file):
+    """配置里没单独设过的人，编辑时该字段留空，而不是回填一个具体数字。"""
+    resp = await client.post(
+        "/recipients",
+        data={"name": "继承默认", "solar_birthday": "1990-05-05", "reminder_days": ""},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+    resp = await client.get("/recipients/2/edit")
+    assert resp.status_code == 200
+    assert 'value=""' in resp.text
+
+    # 单独设过的则要回填
+    resp = await client.get("/recipients/0/edit")
+    assert resp.status_code == 200
+    assert 'value="3"' in resp.text
+
+
+async def test_timeline_marks_inherited_reminder_days(client, config_file):
+    """时间轴要能区分「继承默认」与「单独设置」。"""
+    await client.post(
+        "/recipients",
+        data={"name": "继承默认", "solar_birthday": "1990-05-05", "reminder_days": ""},
+        follow_redirects=False,
+    )
+    resp = await client.get("/")
+    assert resp.status_code == 200
+    body = resp.text
+    # 继承那条带"默认"标记，单独设的（张三）不带宽窄不一的额外文案
+    assert "继承默认" in body
+    assert "默认</span>" in body or "默认" in body
+
+
+async def test_default_reminder_days_follows_active_channel(config_file, tmp_path):
+    """回归测试：默认提前天数以**生效渠道**为准，不能写死 smtp 优先。
+
+    症状：start_notification: resend、resend 设 1 天、smtp 段里残留 3 天时，
+    设置页显示 1，时间轴却显示 3，run 也真按 3 天发。
+    """
+    path = tmp_path / "mixed.yml"
+    path.write_text(
+        "notification:\n"
+        "  smtp:\n"
+        "    host: smtp.example.com\n"
+        "    port: 587\n"
+        "    username: u@example.com\n"
+        "    password: p\n"
+        "    default_reminder_days: 3\n"
+        "  resend:\n"
+        "    api_key: re_TESTKEY1234567890abcdef\n"
+        "    default_receive_email: me@example.com\n"
+        "    default_reminder_days: 1\n"
+        "  start_notification: resend\n"
+        "recipients:\n"
+        "  - name: 继承者\n"
+        "    solar_birthday: 1990-01-20\n",
+        encoding="utf-8",
+    )
+
+    app = create_app(str(path))
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        resp = await ac.get("/")
+    assert resp.status_code == 200
+    assert "1 天" in resp.text, "时间轴应按生效渠道 resend 的 1 天显示"
+
+    # 设置页与时间轴必须是同一个数
+    from src.core.config_manager import ConfigManager
+    from src.web.repository import ConfigRepository
+
+    summary = ConfigRepository(str(path)).get_notification_summary()
+    raw = ConfigRepository(str(path)).get_notification_raw()
+    assert summary["default_reminder_days"] == 1
+    assert raw["default_reminder_days"] == 1
+
+    # run 路径（Config.from_yaml）也要一致：没单独设置的人继承 resend 的 1 天
+    config = ConfigManager(str(path)).config
+    assert config.recipients[0].reminder_days == 1
+
+
 async def test_create_requires_solar_birthday(client, config_file):
     """身份证出生年月日是必填项，农历不再接受手工输入。"""
     before = config_file.read_text(encoding="utf-8")
@@ -135,20 +255,22 @@ async def test_create_requires_solar_birthday(client, config_file):
 
 
 async def test_create_rejects_bad_date_and_keeps_input(client):
+    """位数不对的输入要报错，并把已填内容回填。"""
     resp = await client.post(
         "/recipients",
         data={
             "name": "格式错",
-            "solar_birthday": "1990/10/08",
+            "solar_birthday": "199001",
             "reminder_days": "3",
             "note": "这条备注必须保留",
         },
     )
     assert resp.status_code == 400
-    assert "格式应为" in resp.text
+    # 提示按使用者实际要填的写法说：8 位数字
+    assert "8 位数字" in resp.text
     # 用户已填的其他字段必须回填，不能丢
     assert "格式错" in resp.text
-    assert "1990/10/08" in resp.text
+    assert "199001" in resp.text
     assert "这条备注必须保留" in resp.text
 
 
@@ -200,10 +322,13 @@ async def test_create_rejects_negative_reminder_days(client):
 
 
 async def test_edit_form_prefilled(client):
+    """编辑页回填 8 位数字，与输入框要求的写法一致。"""
     resp = await client.get("/recipients/0/edit")
     assert resp.status_code == 200
     assert "张三" in resp.text
-    assert "1990-01-01" in resp.text
+    assert "19900101" in resp.text
+    # 存储格式（带连字符）不该出现在输入框里
+    assert 'value="1990-01-01"' not in resp.text
 
 
 async def test_update_recipient(client, config_file):
@@ -434,6 +559,7 @@ async def test_settings_never_leaks_full_api_key(client, config_file):
             "from_name": "生日提醒",
             "from_email": "",
             "default_reminder_days": "3",
+            "enabled_types": ["resend"],
         },
         follow_redirects=False,
     )
@@ -454,6 +580,7 @@ async def test_settings_save_writes_config(client, config_file):
             "from_name": "我的提醒",
             "from_email": "",
             "default_reminder_days": "5",
+            "enabled_types": ["resend"],
         },
         follow_redirects=False,
     )
@@ -476,6 +603,7 @@ async def test_settings_blank_key_keeps_existing(client, config_file):
             "api_key": "re_KEEPME1234567890abcdefgh",
             "default_receive_email": "keep@qq.com",
             "default_reminder_days": "3",
+            "enabled_types": ["resend"],
         },
         follow_redirects=False,
     )
@@ -488,6 +616,7 @@ async def test_settings_blank_key_keeps_existing(client, config_file):
             "api_key": "",
             "default_receive_email": "changed@qq.com",
             "default_reminder_days": "3",
+            "enabled_types": ["resend"],
         },
         follow_redirects=False,
     )
@@ -505,6 +634,7 @@ async def test_settings_can_clear_key_explicitly(client, config_file):
             "api_key": "re_CLEARME1234567890abcdefgh",
             "default_receive_email": "x@qq.com",
             "default_reminder_days": "3",
+            "enabled_types": ["resend"],
         },
         follow_redirects=False,
     )
@@ -516,6 +646,7 @@ async def test_settings_can_clear_key_explicitly(client, config_file):
             "clear_api_key": "1",
             "default_receive_email": "x@qq.com",
             "default_reminder_days": "3",
+            "enabled_types": ["resend"],
         },
         follow_redirects=False,
     )
@@ -531,6 +662,7 @@ async def test_settings_validates_email(client):
             "api_key": "",
             "default_receive_email": "not-an-email",
             "default_reminder_days": "3",
+            "enabled_types": ["resend"],
         },
     )
     assert resp.status_code == 400
@@ -544,6 +676,7 @@ async def test_settings_validates_key_prefix(client):
             "api_key": "wrongprefix1234567890",
             "default_receive_email": "a@qq.com",
             "default_reminder_days": "3",
+            "enabled_types": ["resend"],
         },
     )
     assert resp.status_code == 400
@@ -559,6 +692,7 @@ async def test_settings_validates_from_name_no_brackets(client):
             "default_receive_email": "a@qq.com",
             "from_name": "坏<名字>",
             "default_reminder_days": "3",
+            "enabled_types": ["resend"],
         },
     )
     assert resp.status_code == 400
@@ -573,6 +707,7 @@ async def test_settings_preserves_comments(client, config_file):
             "api_key": "re_X1234567890abcdefghijkl",
             "default_receive_email": "c@qq.com",
             "default_reminder_days": "4",
+            "enabled_types": ["resend"],
         },
         follow_redirects=False,
     )
@@ -1411,3 +1546,668 @@ def test_build_timeline_is_fast():
     elapsed = time.perf_counter() - t0
 
     assert elapsed < 0.2, f"10 人构建耗时 {elapsed * 1000:.0f} ms，疑似回退到逐日扫描"
+
+
+# ---------- 访问令牌鉴权 ----------
+
+AUTH_TOKEN = "test-token-abcdefghijklmnopqrstuvwxyz"
+
+
+@pytest_asyncio.fixture
+async def auth_client(config_file: Path):
+    """启用了令牌鉴权的客户端。"""
+    app = create_app(str(config_file), token=AUTH_TOKEN)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        yield ac
+
+
+async def test_no_token_is_denied(auth_client):
+    """没带令牌时不能看到任何业务页面。"""
+    resp = await auth_client.get("/")
+    assert resp.status_code == 401
+    assert "需要访问令牌" in resp.text
+    # 不能把正确令牌泄露到页面上
+    assert AUTH_TOKEN not in resp.text
+
+
+async def test_mutating_routes_are_denied_without_token(auth_client):
+    """写操作同样要被拦住 —— 这是这个功能存在的全部理由。"""
+    resp = await auth_client.post(
+        "/recipients",
+        data={"name": "外人", "solar_birthday": "1990-01-01", "reminder_days": "3"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 401
+
+
+async def test_wrong_token_is_denied(auth_client):
+    resp = await auth_client.get("/?token=wrong-token")
+    assert resp.status_code == 401
+    assert "不正确" in resp.text
+
+
+async def test_correct_token_sets_cookie_and_redirects(auth_client):
+    """带对令牌 → 种 cookie + 跳到去掉 token 的干净地址。"""
+    resp = await auth_client.get(f"/?token={AUTH_TOKEN}", follow_redirects=False)
+    assert resp.status_code == 303
+    # 重定向目标里不能再带 token，否则它一直留在地址栏与浏览器历史里
+    assert "token=" not in resp.headers["location"]
+    assert resp.headers["location"] == "http://test/"
+    assert auth_client.cookies.get("birthdayrs_token") == AUTH_TOKEN
+
+    # 之后不带 token 也能访问
+    resp = await auth_client.get("/")
+    assert resp.status_code == 200
+    assert "时间轴" in resp.text
+
+
+async def test_token_redirect_keeps_other_query_params(auth_client):
+    """去掉 token 时不能把别的查询参数一起丢掉。"""
+    resp = await auth_client.get(
+        f"/?token={AUTH_TOKEN}&notice=hello", follow_redirects=False
+    )
+    assert resp.status_code == 303
+    assert "notice=hello" in resp.headers["location"]
+    assert "token=" not in resp.headers["location"]
+
+
+async def test_cookie_is_httponly(auth_client):
+    resp = await auth_client.get(f"/?token={AUTH_TOKEN}", follow_redirects=False)
+    cookie_header = resp.headers["set-cookie"].lower()
+    assert "httponly" in cookie_header
+
+
+async def test_static_is_reachable_without_token(auth_client):
+    """静态资源放行：拒绝页要能加载样式，且它们不含任何秘密。"""
+    resp = await auth_client.get("/static/style.css")
+    assert resp.status_code == 200
+
+
+async def test_token_does_not_leak_in_denied_page(auth_client):
+    resp = await auth_client.get("/settings")
+    assert resp.status_code == 401
+    assert AUTH_TOKEN not in resp.text
+
+
+async def test_auth_disabled_when_no_token(config_file):
+    """不传 token = 不鉴权：桌面端与既有用法不受影响。"""
+    app = create_app(str(config_file))
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        resp = await ac.get("/")
+    assert resp.status_code == 200
+
+
+def test_resolve_token_precedence(monkeypatch):
+    """令牌来源优先级：--token > 环境变量 > 随机生成。"""
+    from src.web.auth import ENV_TOKEN, resolve_token
+
+    monkeypatch.setenv(ENV_TOKEN, "from-env")
+    assert resolve_token("from-cli") == "from-cli"
+    assert resolve_token() == "from-env"
+    assert resolve_token("  ") == "from-env"
+
+    monkeypatch.delenv(ENV_TOKEN, raising=False)
+    generated = resolve_token()
+    assert generated and generated != "from-env"
+    # 两次生成必须不同，否则等于没有随机性
+    assert generated != resolve_token()
+
+
+def test_access_url_displays_localhost_for_wildcard_bind():
+    """绑 0.0.0.0 时展示 127.0.0.1 —— 前者不是能点开的地址。"""
+    from src.web.auth import access_url
+
+    assert access_url("0.0.0.0", 8000, "abc").startswith("http://127.0.0.1:8000/?token=abc")
+    assert access_url("example.com", 9000, "abc") == "http://example.com:9000/?token=abc"
+
+
+# ---------- 通知渠道（邮件 + 手机推送） ----------
+
+WXPUSHER_YAML = """\
+notification:
+  resend:
+    api_key: re_TESTKEY1234567890abcdef
+    default_receive_email: "me@example.com"
+    default_reminder_days: 3
+  wxpusher:
+    spt: SPT_faketokenforunittests0000
+    default_reminder_days: 3
+  start_notification: resend
+recipients:
+  - name: 张三
+    solar_birthday: 1990-01-01
+    reminder_days: 3
+"""
+
+
+@pytest_asyncio.fixture
+async def channels_client(tmp_path: Path):
+    """一份同时配好邮件与手机推送的配置。"""
+    path = tmp_path / "channels.yml"
+    path.write_text(WXPUSHER_YAML, encoding="utf-8")
+    app = create_app(str(path))
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        yield ac, path
+
+
+def test_summary_exposes_wxpusher_state(tmp_path: Path):
+    """摘要要能反映推送渠道配没配，且 SPT 只给打码值。"""
+    from src.web.repository import ConfigRepository
+
+    path = tmp_path / "c.yml"
+    path.write_text(WXPUSHER_YAML, encoding="utf-8")
+    summary = ConfigRepository(str(path)).get_notification_summary()
+
+    assert summary["wxpusher_configured"] is True
+    # 完整 SPT 绝不出现在摘要里
+    assert "SPT_faketokenforunittests0000" not in str(summary)
+    assert summary["wxpusher_spt_masked"].startswith("SPT_fa")
+
+
+async def test_wxpusher_settings_are_never_leaked_in_page(channels_client):
+    """设置页只显示打码值，绝不能渲染完整 SPT。"""
+    client, _ = channels_client
+
+    resp = await client.get("/settings")
+    assert resp.status_code == 200
+    assert "SPT_faketokenforunittests0000" not in resp.text
+    # mask_secret 保留前 6 位与后 4 位
+    assert "SPT_fa...0000" in resp.text
+
+
+def test_enabling_wxpusher_writes_start_notification(tmp_path: Path):
+    """勾选推送渠道后要写进 start_notification。"""
+    from src.web.repository import ConfigRepository
+
+    path = tmp_path / "c.yml"
+    path.write_text(WXPUSHER_YAML, encoding="utf-8")
+    repo = ConfigRepository(str(path))
+
+    repo.update_notification_settings(
+        {"enabled_types": ["resend", "wxpusher"], "default_reminder_days": 1}
+    )
+
+    saved = path.read_text(encoding="utf-8")
+    assert "resend,wxpusher" in saved
+    assert repo.get_notification_summary()["types"] == ["resend", "wxpusher"]
+
+
+def test_disabling_all_channels_keeps_previous_value(tmp_path: Path):
+    """一个渠道都不勾时保持原值：配置被改成"发不出任何提醒"是更坏的默认。"""
+    from src.web.repository import ConfigRepository
+
+    path = tmp_path / "c.yml"
+    path.write_text(WXPUSHER_YAML, encoding="utf-8")
+    repo = ConfigRepository(str(path))
+
+    repo.update_notification_settings({"enabled_types": []})
+
+    assert repo.get_notification_summary()["types"] == ["resend"]
+
+
+def test_wxpusher_spt_blank_keeps_existing(tmp_path: Path):
+    """SPT 留空 = 不修改（界面显示的是打码值）。"""
+    from src.web.repository import ConfigRepository
+
+    path = tmp_path / "c.yml"
+    path.write_text(WXPUSHER_YAML, encoding="utf-8")
+    repo = ConfigRepository(str(path))
+
+    repo.update_wxpusher_settings({"spt": "", "default_reminder_days": 3})
+
+    assert "SPT_faketokenforunittests0000" in path.read_text(encoding="utf-8")
+
+
+def test_wxpusher_spt_can_be_cleared(tmp_path: Path):
+    from src.web.repository import ConfigRepository
+
+    path = tmp_path / "c.yml"
+    path.write_text(WXPUSHER_YAML, encoding="utf-8")
+    repo = ConfigRepository(str(path))
+
+    repo.update_wxpusher_settings({"clear_spt": True, "default_reminder_days": 3})
+
+    assert "SPT_faketokenforunittests0000" not in path.read_text(encoding="utf-8")
+    assert repo.get_notification_summary()["wxpusher_configured"] is False
+
+
+def test_empty_section_does_not_break_loading(tmp_path: Path):
+    """空配置段（清空密钥后就是这个样子）不能让配置加载崩掉。
+
+    缺必填字段时按"未配置"处理即可 —— 少一个渠道只是不发那种通知。
+    """
+    from src.core.config import Config
+
+    path = tmp_path / "c.yml"
+    path.write_text(
+        "notification:\n"
+        "  resend: {}\n"
+        "  start_notification: resend\n"
+        "recipients:\n"
+        "  - name: 张三\n"
+        "    solar_birthday: 1990-01-01\n",
+        encoding="utf-8",
+    )
+    config = Config.from_yaml(str(path))
+    assert config.resend_config is None
+    assert config.recipients[0].reminder_days == 0
+
+
+def test_channel_requirements_block_enabled_channel_without_credential():
+    """启用了某渠道却没给凭据时要拦住，并指出缺哪个。"""
+    from src.web.settings_schemas import validate_channel_requirements
+
+    errors = validate_channel_requirements(
+        ["resend"],
+        {"api_key": "", "default_receive_email": ""},
+        {"has_resend_key": False},
+    )
+    assert "api_key" in errors
+    assert "default_receive_email" in errors
+
+    # 只开推送时不该被邮箱要求拦住
+    errors = validate_channel_requirements(
+        ["wxpusher"],
+        {"spt": "SPT_abcdefghijklmnop", "default_receive_email": ""},
+        {},
+    )
+    assert errors == {}
+
+
+def test_channel_requirements_require_at_least_one():
+    from src.web.settings_schemas import validate_channel_requirements
+
+    errors = validate_channel_requirements([], {}, {})
+    assert "enabled_types" in errors
+
+
+def test_wxpusher_accepts_app_token_without_spt():
+    """回归：配了 appToken 就不该再要求 SPT。
+
+    曾经这条校验写死要求 SPT，于是已经有 appToken + self_uid 的人一删掉 SPT
+    就再也保存不了设置 —— 保存时被"请填写 SPT"拦住，而 SPT 那条路早就被
+    更完整的 appToken 路径取代了。
+    """
+    from src.web.settings_schemas import validate_channel_requirements
+
+    errors = validate_channel_requirements(
+        ["wxpusher"],
+        {"app_token": "AT_abcdefghijklmnop", "self_uid": "UID_xyz", "spt": ""},
+        {},
+    )
+    assert errors == {}, "有 appToken 就该放行"
+
+
+def test_wxpusher_accepts_existing_app_token_with_blank_form():
+    """appToken 已存过、表单留空（= 不修改）也要放行。"""
+    from src.web.settings_schemas import validate_channel_requirements
+
+    errors = validate_channel_requirements(
+        ["wxpusher"], {"app_token": "", "spt": ""},
+        {"has_wxpusher_app_token": True},
+    )
+    assert errors == {}
+
+
+def test_wxpusher_accepts_existing_spt_only():
+    """老配置（只有 SPT）继续可用，不能被新规则拦住。"""
+    from src.web.settings_schemas import validate_channel_requirements
+
+    errors = validate_channel_requirements(
+        ["wxpusher"], {"app_token": "", "spt": ""},
+        {"has_wxpusher_spt": True},
+    )
+    assert errors == {}
+
+
+def test_wxpusher_requires_something():
+    """两条路径都没有 → 拦住，并说清缺什么。"""
+    from src.web.settings_schemas import validate_channel_requirements
+
+    errors = validate_channel_requirements(
+        ["wxpusher"], {"app_token": "", "spt": ""}, {}
+    )
+    assert "app_token" in errors
+    assert "SPT" in errors["app_token"]
+
+
+# ---------- 生日输入格式（8 位数字） ----------
+
+
+async def test_create_accepts_eight_digit_birthday(client, config_file):
+    """界面要求填 8 位数字，但要**按存储格式** YYYY-MM-DD 落盘。"""
+    resp = await client.post(
+        "/recipients",
+        data={"name": "八位数字", "solar_birthday": "19880520", "reminder_days": "3"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+    saved = config_file.read_text(encoding="utf-8")
+    assert "solar_birthday: '1988-05-20'" in saved
+    # 原始数字不该留在配置里
+    assert "19880520" not in saved
+    # 农历照常自动推导（1988-05-20 的农历是 1988年四月初五）
+    assert "1988-04-05" in saved
+
+
+async def test_create_accepts_hyphenated_birthday_too(client, config_file):
+    """带连字符的写法仍然接受 —— 已有配置与 API 调用方用的是它。"""
+    resp = await client.post(
+        "/recipients",
+        data={"name": "带横线", "solar_birthday": "1988-05-20", "reminder_days": "3"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "solar_birthday: '1988-05-20'" in config_file.read_text(encoding="utf-8")
+
+
+async def test_edit_form_shows_eight_digits(client):
+    """编辑页回填 8 位数字，与输入框要求的写法一致。"""
+    resp = await client.get("/recipients/0/edit")
+    assert resp.status_code == 200
+    assert 'value="19900101"' in resp.text
+
+
+async def test_lunar_api_accepts_eight_digits(client):
+    """实时校验接口要能吃下 8 位数字（前端原样把输入框内容发过来）。"""
+    resp = await client.get("/api/lunar", params={"solar": "19900120"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ok"] is True
+    assert data["display"] == "腊月廿四"
+    assert data["stored"] == "1989-12-24"
+    # 顺带回传归一化后的存储格式，前端可用来对齐
+    assert data["solar"] == "1990-01-20"
+
+
+async def test_lunar_api_rejects_impossible_date_in_digits(client):
+    """8 位数字里包着不存在的日期时也要拒绝，不能静默归一化。"""
+    resp = await client.get("/api/lunar", params={"solar": "19900132"})
+    data = resp.json()
+    assert data["ok"] is False
+    assert data["hint"]
+
+
+def test_normalize_solar_input_handles_both_forms():
+    """输入层归一化：8 位数字与带连字符都进，一律出存储格式。"""
+    from src.web.lunar import normalize_solar_input
+
+    assert normalize_solar_input("19900120") == "1990-01-20"
+    assert normalize_solar_input("1990-01-20") == "1990-01-20"
+    # YAML 解析出的 date 对象也要能处理
+    import datetime
+
+    assert normalize_solar_input(datetime.date(1990, 1, 20)) == "1990-01-20"
+    # 空值
+    assert normalize_solar_input("") == ""
+    assert normalize_solar_input(None) == ""
+    # 位数不对：原样返回，交给校验层报错，不吞掉使用者的输入
+    assert normalize_solar_input("199001") == "199001"
+    assert normalize_solar_input("abc") == "abc"
+
+
+def test_format_solar_input_round_trips():
+    """格式化与归一化是一对，来回转换不丢信息。"""
+    from src.web.lunar import format_solar_input, normalize_solar_input
+
+    assert format_solar_input("1990-01-20") == "19900120"
+    # 月份/日期补零
+    assert format_solar_input("1990-09-05") == "19900905"
+    assert normalize_solar_input(format_solar_input("1990-09-05")) == "1990-09-05"
+
+
+def test_format_solar_input_keeps_unparseable_value():
+    """认不出来时原样返回，别把数据弄丢。"""
+    from src.web.lunar import format_solar_input
+
+    assert format_solar_input("") == ""
+    assert format_solar_input("垃圾数据") == "垃圾数据"
+
+
+# ---------- 受众（这条提醒发给谁） ----------
+
+
+async def test_create_defaults_to_self_audience(client, config_file):
+    """不选受众时默认"只发给我自己" —— 广播出去的信息收不回来。"""
+    resp = await client.post(
+        "/recipients",
+        data={"name": "私人朋友", "solar_birthday": "1990-05-05"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+    import yaml
+
+    recipients = yaml.safe_load(config_file.read_text(encoding="utf-8"))["recipients"]
+    created = [r for r in recipients if r["name"] == "私人朋友"][0]
+    assert created["audience"] == "self"
+
+
+async def test_create_with_group_audience(client, config_file):
+    """选"发给团体所有人"要真的写进配置。"""
+    resp = await client.post(
+        "/recipients",
+        data={
+            "name": "团体成员",
+            "solar_birthday": "1990-05-05",
+            "audience": "group",
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+    import yaml
+
+    recipients = yaml.safe_load(config_file.read_text(encoding="utf-8"))["recipients"]
+    created = [r for r in recipients if r["name"] == "团体成员"][0]
+    assert created["audience"] == "group"
+
+
+async def test_create_rejects_bad_audience(client, config_file):
+    """未知受众要**报错**，不能静默回退。
+
+    静默回退到 self 的后果是"我以为发给了团体、实际只发给自己"——
+    这类错配比直接拦住更难发现。
+    """
+    before = config_file.read_text(encoding="utf-8")
+    resp = await client.post(
+        "/recipients",
+        data={"name": "X", "solar_birthday": "1990-05-05", "audience": "everyone"},
+    )
+    assert resp.status_code == 400
+    assert "请选择这条提醒发给谁" in resp.text
+    # 校验失败不得写盘
+    assert config_file.read_text(encoding="utf-8") == before
+
+
+async def test_edit_form_prefills_audience(client):
+    """编辑页要回填当前受众，否则一保存就把团体记录悄悄改成私人。"""
+    await client.post(
+        "/recipients",
+        data={"name": "团体成员", "solar_birthday": "1990-05-05", "audience": "group"},
+        follow_redirects=False,
+    )
+    resp = await client.get("/recipients/2/edit")
+    assert resp.status_code == 200
+    # group 那个 option 应带 selected
+    body = resp.text
+    idx = body.find('value="group"')
+    assert idx != -1
+    assert "selected" in body[idx:idx + 40]
+
+
+async def test_timeline_marks_group_recipients(client, config_file):
+    """时间轴要标出哪条会广播给团体 —— 这是不可撤销的操作。"""
+    await client.post(
+        "/recipients",
+        data={"name": "团体成员", "solar_birthday": "1990-05-05", "audience": "group"},
+        follow_redirects=False,
+    )
+    resp = await client.get("/")
+    assert resp.status_code == 200
+    assert "团体" in resp.text
+
+
+async def test_config_defaults_missing_audience_to_self(tmp_path):
+    """旧配置没有 audience 字段 → 必须按"只发给我自己"处理。"""
+    from src.core.config import Config
+
+    path = tmp_path / "old.yml"
+    path.write_text(
+        "notification:\n"
+        "  resend:\n"
+        "    api_key: re_TESTKEY1234567890abcdef\n"
+        "  start_notification: resend\n"
+        "recipients:\n"
+        "  - name: 旧记录\n"
+        "    solar_birthday: 1990-01-01\n",
+        encoding="utf-8",
+    )
+    config = Config.from_yaml(str(path))
+    assert config.recipients[0].audience == "self"
+
+
+def test_config_rejects_unknown_audience(tmp_path):
+    """配置里写错受众要报错，而不是默默按某个值走。"""
+    from src.core.config import Config
+
+    path = tmp_path / "bad.yml"
+    path.write_text(
+        "notification:\n"
+        "  resend:\n"
+        "    api_key: re_x\n"
+        "  start_notification: resend\n"
+        "recipients:\n"
+        "  - name: X\n"
+        "    solar_birthday: 1990-01-01\n"
+        "    audience: everyone\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError) as exc:
+        Config.from_yaml(str(path))
+    assert "audience" in str(exc.value)
+
+
+def test_summary_reports_broadcast_capability(tmp_path):
+    """设置页要能知道"团体提醒发不发得出去"。"""
+    from src.web.repository import ConfigRepository
+
+    path = tmp_path / "c.yml"
+    path.write_text(
+        "notification:\n"
+        "  wxpusher:\n"
+        "    app_token: AT_fakeapptokenforunittests0\n"
+        "    self_uid: UID_fakeselfuid\n"
+        "  start_notification: wxpusher\n"
+        "recipients: []\n",
+        encoding="utf-8",
+    )
+    summary = ConfigRepository(str(path)).get_notification_summary()
+
+    assert summary["wxpusher_can_broadcast"] is True
+    assert summary["wxpusher_can_self"] is True
+    # 完整 appToken 绝不能出现在摘要里
+    assert "AT_fakeapptokenforunittests0" not in str(summary)
+
+
+def test_self_uid_is_written_and_clearable(tmp_path):
+    """self_uid 不是密钥：原样回填，留空即清除。"""
+    from src.web.repository import ConfigRepository
+
+    path = tmp_path / "c.yml"
+    path.write_text(
+        "notification:\n"
+        "  wxpusher:\n"
+        "    app_token: AT_fakeapptokenforunittests0\n"
+        "  start_notification: wxpusher\n"
+        "recipients: []\n",
+        encoding="utf-8",
+    )
+    repo = ConfigRepository(str(path))
+
+    repo.update_wxpusher_settings({"self_uid": "UID_fakeselfuid"})
+    assert repo.get_notification_raw()["wxpusher_self_uid"] == "UID_fakeselfuid"
+
+    repo.update_wxpusher_settings({"self_uid": ""})
+    assert repo.get_notification_raw()["wxpusher_self_uid"] == ""
+
+
+def test_app_token_blank_keeps_existing_but_can_be_cleared(tmp_path):
+    """appToken 留空 = 不修改；要清空须显式传 clear_app_token。"""
+    from src.web.repository import ConfigRepository
+
+    path = tmp_path / "c.yml"
+    path.write_text(
+        "notification:\n"
+        "  wxpusher:\n"
+        "    app_token: AT_fakeapptokenforunittests0\n"
+        "  start_notification: wxpusher\n"
+        "recipients: []\n",
+        encoding="utf-8",
+    )
+    repo = ConfigRepository(str(path))
+
+    repo.update_wxpusher_settings({"app_token": ""})
+    assert "AT_fakeapptokenforunittests0" in path.read_text(encoding="utf-8")
+
+    repo.update_wxpusher_settings({"clear_app_token": True})
+    assert "AT_fakeapptokenforunittests0" not in path.read_text(encoding="utf-8")
+
+
+def test_raw_reports_capability_flags(tmp_path):
+    """回归：能力标志必须出现在 ``get_notification_raw()`` 里。
+
+    设置页模板读的是 raw（values.*）。只把标志放在 summary 里的话，
+    页面永远显示"缺 appToken"，即使配置里已经填好了。
+    """
+    from src.web.repository import ConfigRepository
+
+    path = tmp_path / "c.yml"
+    path.write_text(
+        "notification:\n"
+        "  wxpusher:\n"
+        "    app_token: AT_fakeapptokenforunittests0\n"
+        "    self_uid: UID_fakeselfuid\n"
+        "  start_notification: wxpusher\n"
+        "recipients: []\n",
+        encoding="utf-8",
+    )
+    raw = ConfigRepository(str(path)).get_notification_raw()
+
+    assert raw["wxpusher_can_broadcast"] is True
+    assert raw["wxpusher_can_self"] is True
+    assert raw["has_wxpusher_app_token"] is True
+
+
+def test_settings_page_shows_ready_when_configured(tmp_path):
+    """配好之后设置页不该再显示"发不出去"。"""
+    import asyncio
+
+    from httpx import ASGITransport, AsyncClient
+
+    path = tmp_path / "c.yml"
+    path.write_text(
+        "notification:\n"
+        "  wxpusher:\n"
+        "    app_token: AT_fakeapptokenforunittests0\n"
+        "    self_uid: UID_fakeselfuid\n"
+        "  start_notification: wxpusher\n"
+        "recipients: []\n",
+        encoding="utf-8",
+    )
+    app = create_app(str(path))
+
+    async def run():
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            return await ac.get("/settings")
+
+    resp = asyncio.run(run())
+    assert resp.status_code == 200
+    assert "可广播给团体所有人" in resp.text
+    assert "可把私人提醒只发给你自己" in resp.text
+    assert "缺 appToken" not in resp.text

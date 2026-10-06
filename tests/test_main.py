@@ -37,6 +37,9 @@ def reminder_and_checker(test_config):
         # Mock ConfigManager
         mock_config_manager = Mock()
         mock_config_manager.config = test_config
+        # reload_config() 现在走公开的 reload()（不再直接改私有 _config），
+        # mock 也要按这个接口给。
+        mock_config_manager.reload.return_value = test_config
         mock_config_manager.validate_config.return_value = True
         mock_config_manager.get_templates_dir.return_value = "/test/templates"
         mock_config_manager_cls.return_value = mock_config_manager

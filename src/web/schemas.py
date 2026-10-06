@@ -18,10 +18,13 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from src.web.lunar import solar_to_lunar
+from src.core.config import AUDIENCES
+from src.web.lunar import normalize_solar_input, parse_iso_date, solar_to_lunar
 
+#: 存储格式（也是 config.yml 里的格式）。
 DATE_FORMAT = "%Y-%m-%d"
-DATE_HINT = "格式应为 1990-01-20（年-月-日）"
+#: 提示要按**使用者实际输入的写法**说，否则他会照着提示去填连字符。
+DATE_HINT = "请填 8 位数字，例如 19900120"
 
 #: 这个字段在界面上的名字。
 #: 标签与所有校验提示必须用同一个说法，否则使用者对不上号。
@@ -32,21 +35,30 @@ MAX_NOTE_LENGTH = 500
 
 
 def _clean_solar_date(value: Optional[str]) -> str:
-    """校验必填的身份证出生年月日。"""
-    value = (value or "").strip()
-    if not value:
+    """校验必填的身份证出生年月日，返回**存储格式** ``YYYY-MM-DD``。
+
+    输入允许两种写法：8 位数字（界面上要求的 ``19900120``）与带连字符的
+    ``1990-01-20``（已有配置、API 调用方）。统一由 ``normalize_solar_input``
+    归一化后再校验 —— 校验和存储都只认一种格式，多格式共存只在入口这一层。
+
+    这里用 ``parse_iso_date`` 而不是 ``strptime``：前者会拒绝 1990-02-30
+    这类不存在的日期，是项目里唯一的权威日期校验入口。
+    """
+    raw = (value or "").strip()
+    if not raw:
         raise ValueError(f"请填写{SOLAR_FIELD_LABEL}")
 
-    try:
-        parsed = datetime.strptime(value, DATE_FORMAT).date()
-    except ValueError as exc:
-        raise ValueError(f"{SOLAR_FIELD_LABEL}{DATE_HINT}") from exc
+    stored = normalize_solar_input(raw)
+    parsed = parse_iso_date(stored)
+    if parsed is None:
+        raise ValueError(f"{SOLAR_FIELD_LABEL}不正确，{DATE_HINT}")
 
     if parsed.year < 1900:
         raise ValueError(f"{SOLAR_FIELD_LABEL}的年份看起来不对，请填四位年份")
     if parsed.year > datetime.now().year:
         raise ValueError(f"{SOLAR_FIELD_LABEL}不能是未来的日期")
-    return value
+    # 返回**归一化后**的值：存储格式永远是 YYYY-MM-DD，与使用者输入什么写法无关。
+    return stored
 
 
 class RecipientForm(BaseModel):
@@ -60,7 +72,11 @@ class RecipientForm(BaseModel):
 
     name: str = Field(max_length=64)
     solar_birthday: str = ""
-    reminder_days: str = "0"
+    #: 留空 = **不单独设置**，用设置页里的全局默认值。这是常态，也是默认行为。
+    #: 只有使用者显式填了数字，才按这个数字提醒这个人。
+    reminder_days: str = ""
+    #: 提醒发给谁看：``self``（只发给我，默认）或 ``group``（发给团体所有人）。
+    audience: str = "self"
     note: str = ""
 
     @field_validator("name")
@@ -82,8 +98,9 @@ class RecipientForm(BaseModel):
     @classmethod
     def check_reminder_days(cls, v: str) -> str:
         raw = (v or "").strip()
+        # 空 = 继承全局默认（最常见的用法），保留空串本身，不折叠成 0。
         if not raw:
-            return "0"
+            return ""
         try:
             days = int(raw)
         except (TypeError, ValueError) as exc:
@@ -94,6 +111,14 @@ class RecipientForm(BaseModel):
             raise ValueError(f"提前提醒的天数最多 {MAX_REMINDER_DAYS} 天")
         return str(days)
 
+    @field_validator("audience")
+    @classmethod
+    def check_audience(cls, v: str) -> str:
+        value = (v or "").strip() or "self"
+        if value not in AUDIENCES:
+            raise ValueError("请选择这条提醒发给谁")
+        return value
+
     @field_validator("note")
     @classmethod
     def check_note(cls, v: str) -> str:
@@ -103,8 +128,9 @@ class RecipientForm(BaseModel):
         return v
 
     @property
-    def reminder_days_value(self) -> int:
-        return int(self.reminder_days)
+    def reminder_days_value(self) -> Optional[int]:
+        """单独设置的天数；``None`` 表示不设置，用全局默认。"""
+        return int(self.reminder_days) if self.reminder_days else None
 
     @property
     def computed_lunar_birthday(self) -> Optional[str]:
@@ -118,14 +144,18 @@ class RecipientForm(BaseModel):
         不出现在这里，以免被清空。
 
         - ``lunar_birthday`` 写自动推导值：CLI 的 run 命令靠它才能在农历生日当天提醒。
-        - ``reminder_days`` 为 0 时写 0 而非省略 —— 0 是合法语义（"只在当天提醒"），
-          省略会退回默认值造成行为改变。
+        - ``reminder_days`` 留空时**整个键都不写**：配置里没有这个键，运行时就会退回
+          全局默认值（见 ``Config.from_yaml``）。显式填 0 则写 0 —— 0 是合法语义
+          （"只在当天提醒"），与"不设置"必须区分开。
         """
         data = {
             "name": self.name,
             "solar_birthday": self.solar_birthday,
             "lunar_birthday": self.computed_lunar_birthday,
             "reminder_days": self.reminder_days_value,
+            # 总是写出来：它决定提醒发给谁，不该靠"省略键"来隐含默认值 ——
+            # 省略会让配置读起来看不出这条是私人还是团体的。
+            "audience": self.audience,
             "note": self.note or None,
         }
         return {k: v for k, v in data.items() if v is not None}

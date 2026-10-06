@@ -135,10 +135,11 @@ def test_validate_solar_empty(api):
 
 
 def test_get_recipient_for_edit(api):
+    """编辑页回填 8 位数字，与输入框要求的写法一致。"""
     r = api.get_recipient(0)
     assert r["ok"] is True
     assert r["values"]["name"] == "张三"
-    assert r["values"]["solar_birthday"] == "1990-01-20"
+    assert r["values"]["solar_birthday"] == "19900120"
     assert r["values"]["note"] == "大学同学"
 
 
@@ -204,9 +205,10 @@ def test_save_recipient_validation_errors(api, config_file):
     assert "请填写姓名" in r["error"]
     assert r["errors"], "应返回字段级错误供表单标注"
 
-    r = api.save_recipient({"name": "X", "solar_birthday": "1990-01-32", "reminder_days": "3"})
+    # 位数对但日期不存在：必须报错，不能像 lunar_python 那样静默归一化
+    r = api.save_recipient({"name": "X", "solar_birthday": "19901332", "reminder_days": "3"})
     assert r["ok"] is False
-    assert "不合理" in r["error"] or "格式" in r["error"]
+    assert "不正确" in r["error"] or "不合理" in r["error"] or "格式" in r["error"]
 
     # 校验失败不得写盘
     assert config_file.read_text(encoding="utf-8") == before
@@ -265,6 +267,7 @@ def test_save_settings(api, config_file):
             "from_name": "我的提醒",
             "from_email": "",
             "default_reminder_days": "5",
+            "enabled_types": ["resend"],
         }
     )
     assert r["ok"] is True
@@ -282,6 +285,7 @@ def test_save_settings_blank_key_keeps_existing(api, config_file):
             "from_name": "",
             "from_email": "",
             "default_reminder_days": "3",
+            "enabled_types": ["resend"],
         }
     )
     saved = config_file.read_text(encoding="utf-8")
@@ -298,6 +302,7 @@ def test_save_settings_can_clear_key(api, config_file):
             "from_name": "",
             "from_email": "",
             "default_reminder_days": "3",
+            "enabled_types": ["resend"],
         }
     )
     saved = config_file.read_text(encoding="utf-8")
@@ -319,6 +324,7 @@ def test_save_settings_preserves_comments(api, config_file):
             "from_name": "",
             "from_email": "",
             "default_reminder_days": "4",
+            "enabled_types": ["resend"],
         }
     )
     assert "保留这条注释用于验证" in config_file.read_text(encoding="utf-8")
@@ -376,3 +382,31 @@ def test_app_api_hides_internals():
     # 这些是内部状态，不该暴露
     for internal in ("repo", "config", "config_manager"):
         assert internal not in public, f"{internal} 不应暴露给前端"
+
+
+# ---------- 生日输入格式（8 位数字） ----------
+
+
+def test_save_recipient_accepts_eight_digits(api, config_file):
+    """桌面端同样接受 8 位数字，并按存储格式落盘。"""
+    r = api.save_recipient(
+        {"name": "八位", "solar_birthday": "19880520", "reminder_days": "3"}
+    )
+    assert r["ok"] is True
+    saved = config_file.read_text(encoding="utf-8")
+    assert "solar_birthday: '1988-05-20'" in saved
+    assert "19880520" not in saved
+
+
+def test_validate_solar_accepts_eight_digits(api):
+    """即时校验接口接受 8 位数字。"""
+    r = api.validate_solar("19900120")
+    assert r["ok"] is True
+    assert r["state"] == "ok"
+    assert r["lunar_display"] == "腊月廿四"
+
+
+def test_validate_solar_rejects_impossible_date_in_digits(api):
+    r = api.validate_solar("19900132")
+    assert r["ok"] is False
+    assert r["state"] == "bad"

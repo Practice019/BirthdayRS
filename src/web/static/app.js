@@ -149,7 +149,27 @@ document.querySelectorAll('form.js-test-send').forEach(function (form) {
       });
   }
 
+  /* 生日一律按 8 位数字填（身份证上的写法）。
+     这里只拦"明显不是数字"的输入，不强行补零也不做日期校验 ——
+     校验交给服务端，本地纠正太多反而会把人搞糊涂。
+     粘贴 "1990-01-20" 这种带连字符的写法也接受，自动去掉分隔符。 */
+  function digitsOnly(text) {
+    return String(text || '').replace(/[^0-9]/g, '').slice(0, 8);
+  }
+
   input.addEventListener('input', function () {
+    var cleaned = digitsOnly(input.value);
+    if (cleaned !== input.value) {
+      var pos = input.selectionStart;
+      var removed = input.value.length - cleaned.length;
+      input.value = cleaned;
+      // 保持光标位置：删掉的分隔符都在光标左边时才回退
+      if (pos !== null) {
+        try {
+          input.setSelectionRange(Math.max(0, pos - removed), Math.max(0, pos - removed));
+        } catch (e) { /* 某些浏览器对 text 输入框限制 setSelectionRange */ }
+      }
+    }
     if (timer) {
       clearTimeout(timer);
     }

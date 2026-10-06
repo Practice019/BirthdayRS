@@ -424,6 +424,41 @@ code, .mono { font-family: var(--font-mono); font-size: 0.92em; }
 .actions { display: flex; gap: var(--sp-2); margin-top: var(--sp-6); }
 .actions--top { margin: 0 0 var(--sp-4); }
 
+/* ---------- 吸底保存按钮 ---------- */
+
+/* 设置页比一屏长，保存按钮在页面底部 —— 改完上面某个字段想保存时，
+   得先滚到底找按钮。让它常驻在视口右下角解决它。
+
+   只有按钮浮着，不加通栏背景条：这页本来就不长，一条横贯的色带会显得
+   比内容本身还重，也挡住正在看的字段。
+
+   为什么用 sticky 而不是 fixed：
+   - fixed 会脱离文档流，需要给页面补等高的 padding-bottom，否则永远盖住页脚；
+   - sticky 在**到达父容器底部时自动归位**，天然不会压住页脚与后面的内容。
+   代价是吸附范围受父元素限制，所以它必须待在 form 外面（见模板注释）。 */
+.actionbar {
+  position: sticky;
+  bottom: var(--sp-4);
+  /* 盖在内容之上，否则滚动时字段会从它背后透出来 */
+  z-index: 10;
+  display: flex;
+  justify-content: flex-end;
+  /* 右对齐，让按钮停在表单那一列的右边缘附近。
+     这里**不加负外边距**：曾经用负 margin 把按钮拉进 .page 的底部内边距，
+     结果 sticky 的可达范围跟着下移到 .page 底边 —— 窄屏下页脚更高，
+     滚到底时按钮就压在页脚上了（实测在 390px 宽复现）。
+     留出正常外边距，按钮的自然位置就停在页脚之上。 */
+  margin: var(--sp-4) 0 0;
+  pointer-events: none; /* 容器不吃点击，只有按钮可点 */
+}
+
+.actionbar .btn {
+  pointer-events: auto;
+  /* 浮在内容上方，需要一点阴影与内容拉开层次 —— 没有背景条时，
+     阴影是唯一能表达"我在最上层"的手段。 */
+  box-shadow: 0 2px 8px rgba(31, 35, 40, 0.18);
+}
+
 /* ---------- 预览 ---------- */
 
 .preview-grid {
@@ -494,6 +529,26 @@ code, .mono { font-family: var(--font-mono); font-size: 0.92em; }
 
 /* 设置页：更宽的表单，因为字段比收件人表单多 */
 .form--wide { max-width: 720px; }
+
+/* 设置页按渠道分组。分组是必要的：字段一多，使用者分不清
+   "这个框是给邮件填的还是给推送填的"，而填错位置的后果是发不出去。 */
+.fieldset {
+  margin: 0 0 var(--sp-6);
+  padding: var(--sp-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--paper);
+}
+.fieldset > legend {
+  padding: 0 var(--sp-2);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+/* 分组内的最后一个字段不再叠下边距，避免底部留白过大 */
+.fieldset .field:last-child { margin-bottom: 0; }
+
+.field__hint--top { margin-top: 0; margin-bottom: var(--sp-3); }
 
 .field a { color: var(--brand-dark); }
 
@@ -575,3 +630,44 @@ code, .mono { font-family: var(--font-mono); font-size: 0.92em; }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+/* 设置页：渠道能力概览。让使用者一眼看出"我这么配，哪种提醒发得出去"，
+   而不是等某天真的没收到才发现漏配了。 */
+.capability {
+  margin: 0 0 var(--sp-4);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--canvas);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 13px;
+  line-height: 1.8;
+}
+.capability__ok { color: var(--ok); }
+.capability__gap { color: var(--warn); }
+
+/* 「团体」标记：广播给所有人是不可撤销的，用醒目一点的底色区分于普通 chip */
+.chip--group { background: var(--brand); color: #fff; border-color: var(--brand); }
+
+/* 折叠的次要配置：默认收起，需要时才展开。
+   用在"配好主路径后就用不到"的字段上（如 WxPusher 的 SPT）——
+   彻底删掉会让那条路径无法配置，直接摆出来又让人以为"还得再配一个"。 */
+.advanced {
+  margin-top: var(--sp-4);
+  border-top: 1px solid var(--line);
+  padding-top: var(--sp-3);
+}
+.advanced > summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--muted);
+  list-style: none;
+}
+.advanced > summary::-webkit-details-marker { display: none; }
+.advanced > summary::before {
+  content: "▸ ";
+  display: inline-block;
+  transition: transform 0.15s;
+}
+.advanced[open] > summary::before { content: "▾ "; }
+.advanced > summary:hover { color: var(--ink); }
+.advanced .field { margin-top: var(--sp-4); }

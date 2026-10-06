@@ -2,7 +2,7 @@
 # 复制成 config.yml 后按需修改。config.yml 已被 .gitignore 忽略，
 # 里面的密钥不会被提交。
 #
-# 只需要配一种通知方式即可。三者可以同时用（逗号分隔）。
+# 只需要配一种通知方式即可。几种可以同时用（start_notification 里逗号分隔）。
 
 notification:
   # ---- 方式一：Resend（推荐，只需一个 API Key）----
@@ -17,7 +17,30 @@ notification:
     default_template_file: birthday.html
     default_reminder_days: 3
 
-  # ---- 方式二：SMTP ----
+  # ---- 方式二：WxPusher（手机推送，免费额度宽松）----
+  #
+  # 两种用法按需选，也可以都配。区别在于"提醒发给谁"：
+  #
+  #   app_token  → 用你自己创建的应用发，可以**广播给所有关注者**。
+  #                适合"团体成员的生日，大家都该知道"这类提醒。
+  #   self_uid   → 你自己的 UID。有它才能把"只发给我自己"的记录定向发出去，
+  #                否则这类私人提醒会被广播给团体里所有人。
+  #   spt        → 极简推送令牌。没有 self_uid 时，它作为"只发给我"的兜底
+  #                （SPT 天然只发给持有者自己）。
+  #
+  # 三个都能在 https://wxpusher.zjiecode.com 拿到：
+  #   SPT 在官网扫码即得；app_token 与 self_uid 在开发者后台的应用页里。
+  #
+  # 注意：请用它的 **App 通道**，不要用"微信 ClawBot"通道 —— 后者每次激活
+  # 只有 24 小时有效、且每 10 条就要手动重新激活，对生日提醒这种低频场景
+  # 会静默失效（接口返回成功，人却收不到）。
+  wxpusher:
+    app_token: AT_your_app_token_here   # 有它才能广播给团体所有人
+    self_uid: UID_your_own_uid_here     # 有它才能把私人提醒只发给你自己
+    spt: SPT_your_spt_here              # 可选：没填 self_uid 时的兜底
+    default_reminder_days: 3
+
+  # ---- 方式三：SMTP ----
   smtp:
     host: smtp.example.com
     port: 587
@@ -27,13 +50,15 @@ notification:
     default_template_file: birthday.html
     default_reminder_days: 3
 
-  # ---- 方式三：ServerChan（微信推送，无需域名）----
-  # 在 https://sct.ftqq.com 微信扫码登录后拿到 SENDKEY
+  # ---- 方式四：ServerChan（微信服务号推送）----
+  # 在 https://sct.ftqq.com 微信扫码登录后拿到 SendKey（SCT 开头）。
+  # 免费版每天 5 条。SendKey 以 sctp 开头时走 Server酱³ 端点，程序会自动识别。
   serverchan:
     default_sckey: your_serverchan_sckey
     default_reminder_days: 3
 
-  # 用哪个渠道：resend / email / serverchan，多个用逗号分隔
+  # 用哪些渠道：resend / wxpusher / email / serverchan，多个用逗号分隔。
+  # 设置页可以勾选 resend 与 wxpusher；email 与 serverchan 在这里手工维护。
   start_notification: resend
 
 recipients:
@@ -44,6 +69,7 @@ recipients:
     solar_birthday: 1990-01-20  # 身份证上的出生日期
     lunar_birthday: 1989-12-24  # 由上一行自动换算，人工无需维护
     reminder_days: 3            # 提前几天提醒，0 = 当天
+    audience: self              # self = 只发给我自己（默认）；group = 发给团体所有人
     note: 大学同学               # 只给自己看的备注
 
   - name: 李四

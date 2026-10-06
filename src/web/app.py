@@ -24,6 +24,8 @@ from pydantic import ValidationError
 from src.core.config_manager import ConfigManager
 from src.core.config import Recipient
 from src.core.notification_factory import NotificationFactory
+from src.notification.sender_wxpusher import clear_followers_cache
+from src.web.auth import TokenAuthMiddleware
 from src.web.domain import (
     build_sendable_recipient,
     build_timeline,
@@ -36,8 +38,10 @@ from src.web.domain import (
 from src.web.lunar import (
     INVALID_SOLAR_HINT,
     as_iso_text,
+    format_solar_input,
     lunar_display,
     next_solar_for_lunar,
+    normalize_solar_input,
     parse_iso_date,
     solar_to_lunar,
     to_lunar_display_from_solar,
@@ -49,7 +53,11 @@ from src.web.repository import (
     RecipientNotFoundError,
 )
 from src.web.schemas import RecipientForm
-from src.web.settings_schemas import ResendSettingsForm
+from src.web.settings_schemas import (
+    ResendSettingsForm,
+    WxPusherSettingsForm,
+    validate_channel_requirements,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -57,9 +65,40 @@ _ROOT = Path(__file__).resolve().parent.parent.parent
 _WEB_TEMPLATES = _ROOT / "templates" / "web"
 _STATIC = Path(__file__).resolve().parent / "static"
 
+#: 发送器类名 → 面向使用者的渠道称呼。
+#: 界面上不该出现 ``ResendSender`` 这种内部标识。
+_CHANNEL_LABELS = {
+    "ResendSender": "邮件",
+    "EmailSender": "邮件",
+    "WxPusherSender": "手机推送",
+    "ServerChanSender": "微信推送",
+}
 
-def create_app(config_path: Optional[str] = None) -> FastAPI:
-    """应用工厂。"""
+#: 配置里的渠道标识 → 界面称呼。与上面的类名表分开：一个在模板里用（配置层），
+#: 一个在发送结果提示里用（运行层），两层的关键字来源不同。
+_CHANNEL_NAMES = {
+    "resend": "邮件",
+    "email": "邮件",
+    "wxpusher": "手机推送",
+    "serverchan": "微信推送",
+}
+
+
+def _channel_label(class_name: str) -> str:
+    return _CHANNEL_LABELS.get(class_name, class_name)
+
+
+def _channel_to_label(name: str) -> str:
+    return _CHANNEL_NAMES.get(str(name), str(name))
+
+
+def create_app(config_path: Optional[str] = None, token: Optional[str] = None) -> FastAPI:
+    """应用工厂。
+
+    ``token`` 非空时启用访问令牌鉴权（见 ``src/web/auth.py``）。默认 ``None``
+    表示不鉴权 —— 桌面端与测试用同一套路由，它们不需要这一层；
+    命令行 ``web`` 命令会总是传一个 token。
+    """
     config_manager = ConfigManager(config_path)
     config_manager.config  # 触发加载，配置有问题时尽早失败
 
@@ -68,12 +107,27 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
     app = FastAPI(title="BirthdayRS 管理台", version="0.1.0", docs_url=None, redoc_url=None)
     templates = Jinja2Templates(directory=str(_WEB_TEMPLATES))
     templates.env.filters["dash"] = lambda v: v if v not in (None, "") else "—"
+    # 渠道名 → 界面称呼。模板里不要出现 resend / wxpusher 这类内部标识。
+    templates.env.globals["channel_label"] = _channel_to_label
     if _STATIC.exists():
         app.mount("/static", StaticFiles(directory=str(_STATIC)), name="static")
 
+    if token:
+        # 加在最外层：所有路由（含以后新增的）自动受保护。
+        app.add_middleware(TokenAuthMiddleware, token=token)
+        app.state.token = token
+
     app.state.repo = repo
     app.state.config_manager = config_manager
-    app.state.config = config_manager.config
+
+    # 配置**不缓存**在 app.state 里。
+    #
+    # 曾经这里放着 `app.state.config = config_manager.config`，而配置页保存后
+    # 只有设置页那几个路由会去刷新它 —— 于是"改了设置，收件人页的测试发送仍在用
+    # 旧配置"：界面显示已改成只发手机推送，实际还在发邮件。
+    # 单例式缓存和"配置随时可能被改"这件事天然冲突，索性每次都从 ConfigManager 取，
+    # 而 ConfigManager 自己负责缓存与失效。
+    app.state.current_config = lambda: config_manager.config
 
     # ---------- 辅助 ----------
 
@@ -132,16 +186,24 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
             mode=mode,
             index=index,
             active="new" if mode == "create" else None,
+            # 表单里「提前几天提醒」留空时用的值，只作提示展示。
+            default_reminder_days=get_reminder_default(),
         )
         return templates.TemplateResponse(
             request, "form.html", context, status_code=status_code
         )
 
     def blank_form_values() -> Dict[str, Any]:
+        # reminder_days 留空：表示"不单独设置"，用设置页里的全局默认。
+        # 原来这里填的是全局默认值本身，于是新建时会把当时的默认值固化到这个人身上，
+        # 之后改全局默认对他就再也不生效了。
         return {
             "name": "",
             "solar_birthday": "",
-            "reminder_days": get_reminder_default(),
+            "reminder_days": "",
+            # 默认"只发给我自己"：私人朋友是常态，广播出去的信息收不回来。
+            # 想广播必须显式选一次。
+            "audience": "self",
             "note": "",
         }
 
@@ -153,9 +215,14 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
 
         注意：YAML 里裸写的 ``1990-01-20`` 会被解析成 ``datetime.date`` 而不是字符串，
         所以这里必须先归一化成字符串，否则 ``.strip()`` 会炸。
+
+        **输入框里回填的是 8 位数字**（``19900120``），与使用者要填的写法一致；
+        存储与校验仍用 ``YYYY-MM-DD``。转换集中在这一个入口，模板只负责展示。
         """
         values = dict(values)
         solar = as_iso_text(values.get("solar_birthday"))
+        # 校验用存储格式；回填用 8 位数字。两者都从同一个原始值算出来。
+        values["solar_birthday"] = format_solar_input(solar) or solar
 
         valid, message = validate_solar_date(solar) if solar else (False, "")
         values["solar_state"] = (
@@ -224,9 +291,10 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
 
     @app.get("/settings", response_class=HTMLResponse)
     async def settings(request: Request) -> HTMLResponse:
-        """设置页：编辑让项目正常运行的 Resend 配置。
+        """设置页：编辑让项目能正常发提醒所需的配置。
 
-        ``api_key`` 只显示打码值；留空提交表示不修改（见 ``update_resend_settings``）。
+        密钥类字段（API Key / SPT）只显示打码值；留空提交表示不修改
+        （见 ``update_resend_settings`` / ``update_wxpusher_settings``）。
         """
         return templates.TemplateResponse(
             request,
@@ -246,25 +314,53 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
     async def save_settings(request: Request) -> HTMLResponse:
         form = await request.form()
         values = dict(form)
-        errors = {}
+
+        # 勾选框未选中时不会出现在表单里，所以要显式取列表。
+        enabled_types = [t for t in form.getlist("enabled_types") if t]
 
         # 允许用 checkbox 显式清空密钥
-        if values.get("clear_api_key"):
+        clear_key = bool(values.get("clear_api_key"))
+        clear_spt = bool(values.get("clear_spt"))
+        clear_app_token = bool(values.get("clear_app_token"))
+        if clear_key:
             values["api_key"] = ""
-            clear_key = True
-        else:
-            clear_key = False
+        if clear_spt:
+            values["spt"] = ""
+        if clear_app_token:
+            values["app_token"] = ""
+
+        raw = repo.get_notification_raw()
+        errors: Dict[str, str] = {}
 
         try:
-            payload = ResendSettingsForm.model_validate(values)
+            resend_payload = ResendSettingsForm.model_validate(values)
         except ValidationError as exc:
-            errors = collect_form_errors(exc)
+            errors.update(collect_form_errors(exc))
+
+        try:
+            wxpusher_payload = WxPusherSettingsForm.model_validate(values)
+        except ValidationError as exc:
+            errors.update(collect_form_errors(exc))
+
+        # 跨字段：被启用的渠道必须有凭据。放在字段校验之后，两类错误一起回填。
+        errors.update(
+            validate_channel_requirements(
+                enabled_types,
+                values,
+                existing={
+                    "has_resend_key": raw.get("has_resend_key", False),
+                    "has_wxpusher_app_token": raw.get("has_wxpusher_app_token", False),
+                    "has_wxpusher_spt": raw.get("has_wxpusher_spt", False),
+                },
+            )
+        )
 
         if errors:
             # 校验失败：把输入回填，但密钥字段不回填明文（用户没填就是没填）。
-            merged = dict(repo.get_notification_raw())
+            merged = dict(raw)
             merged.update(
                 {
+                    "types": enabled_types or raw.get("types") or [],
                     "resend_receive_email": values.get("default_receive_email", ""),
                     "resend_from_name": values.get("from_name", ""),
                     "resend_from_email": values.get("from_email", ""),
@@ -287,12 +383,32 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
             )
 
         try:
-            repo_values = payload.to_repository_values()
+            repo_values = resend_payload.to_repository_values()
             # 显式勾选"清除"时把意图传下去 —— schema 会把空 key 规范成"不改动"，
             # 这里补回用户的真实意图，否则勾选框看起来生效实际被覆盖。
             if clear_key:
                 repo_values["clear_api_key"] = True
             repo.update_resend_settings(repo_values)
+
+            wx_values = wxpusher_payload.to_repository_values()
+            if clear_spt:
+                wx_values["clear_spt"] = True
+            if clear_app_token:
+                wx_values["clear_app_token"] = True
+            repo.update_wxpusher_settings(wx_values)
+
+            # 换过 appToken 后关注者列表就不可信了，清掉缓存让它重新拉。
+            if clear_app_token or (wxpusher_payload.app_token or "").strip():
+                clear_followers_cache()
+
+            # 渠道启用状态与默认天数统一在这一层落盘：
+            # start_notification 只能有一个来源，分散在各渠道里会互相覆盖。
+            repo.update_notification_settings(
+                {
+                    "enabled_types": enabled_types,
+                    "default_reminder_days": int(resend_payload.default_reminder_days),
+                }
+            )
         except Exception as exc:
             logger.exception("保存设置失败")
             return templates.TemplateResponse(
@@ -310,38 +426,45 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
                 status_code=500,
             )
 
-        if clear_key:
+        # 让缓存失效：否则时间轴与收件人页仍按旧渠道渲染/发送。
+        app.state.config_manager.reload()
+
+        if clear_key or clear_spt or clear_app_token:
             return RedirectResponse(
-                "/settings?notice=已清除 API Key，现在无法发送邮件&saved=1", status_code=303
+                "/settings?notice=已清除密钥，对应的渠道现在发不出去&saved=1", status_code=303
             )
         return RedirectResponse("/settings?notice=设置已保存&saved=1", status_code=303)
 
     @app.post("/settings/test")
     async def settings_test_send(request: Request) -> RedirectResponse:
-        """发一封测试邮件到当前配置的接收邮箱。
+        """给**所有已启用的渠道**各发一条测试消息。
 
         这是真实发送 —— 设置改完后需要一条"能不能通"的即时反馈，
         否则只能等到某人生日到达才发现配错了。
+
+        走全部启用渠道而不是只发邮件：配置页刚改完，使用者要验证的是
+        "这套配置整体能不能送到我手上"。只验邮件会让"推送配错了"漏到生日当天。
         """
         summary = repo.get_notification_summary()
-        target = summary.get("resend_receive_email") or summary.get("default_receive_email")
+        types = summary.get("types") or []
 
-        if not summary.get("resend_configured"):
-            return RedirectResponse("/settings?error=还没填 API Key，无法发送", status_code=303)
-        if not target:
-            return RedirectResponse("/settings?error=还没填接收邮箱，无法发送", status_code=303)
+        if not types:
+            return RedirectResponse(
+                "/settings?error=还没启用任何通知渠道，请在下方勾选至少一个", status_code=303
+            )
 
         # 重新加载配置：设置可能刚被改动过
         try:
-            app.state.config_manager._config = None
-            app.state.config = app.state.config_manager.config
+            config = app.state.config_manager.reload()
         except Exception as exc:
             logger.exception("重新加载配置失败")
             return RedirectResponse(f"/settings?error=重新加载配置失败：{exc}", status_code=303)
 
+        target = summary.get("resend_receive_email") or summary.get("default_receive_email")
+        # 收件邮箱只对邮件渠道有意义；只开推送时它可以是空的。
         probe = Recipient(
-            name="测试邮件",
-            email=str(target),
+            name="测试提醒",
+            email=str(target) if target else None,
             solar_birthday=datetime.now().strftime("%Y-%m-%d"),
             reminder_days=0,
             template_file="birthday.html",
@@ -353,35 +476,33 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
         try:
             senders = NotificationFactory(
                 app.state.config_manager.get_templates_dir()
-            ).create_senders(app.state.config)
+            ).create_senders(config)
         except Exception as exc:
             logger.exception("创建发送器失败")
             return RedirectResponse(f"/settings?error=创建发送器失败：{exc}", status_code=303)
 
-        # 设置页的测试只走邮件类渠道
-        mail_senders = [
-            s for s in senders if type(s).__name__ in ("ResendSender", "EmailSender")
-        ]
-        if not mail_senders:
+        if not senders:
             return RedirectResponse(
-                "/settings?error=当前没有可用的邮件渠道，请检查 Resend 配置", status_code=303
+                "/settings?error=没有可用的发送渠道，请检查已启用渠道的配置是否完整",
+                status_code=303,
             )
 
-        results = await send_reminder_now(probe, extra, mail_senders)
+        results = await send_reminder_now(probe, extra, senders)
         ok = [r for r in results if r["ok"]]
         bad = [r for r in results if not r["ok"]]
 
         if not ok:
-            detail = "；".join(r["detail"] for r in bad)
+            detail = "；".join(f"{r['channel']}：{r['detail']}" for r in bad)
             return RedirectResponse(f"/settings?error=测试发送失败：{detail}", status_code=303)
         if bad:
-            detail = "；".join(r["detail"] for r in bad)
+            detail = "；".join(f"{r['channel']}：{r['detail']}" for r in bad)
             return RedirectResponse(
-                f"/settings?notice=测试邮件已发到 {target}；{detail}", status_code=303
+                f"/settings?notice=已通过 {len(ok)} 个渠道发出测试提醒；{detail}", status_code=303
             )
 
         return RedirectResponse(
-            f"/settings?notice=测试邮件已发到 {target}，请查收（可能进垃圾箱）", status_code=303
+            f"/settings?notice=已通过 {len(ok)} 个渠道发出测试提醒，请查收（邮件可能进垃圾箱）",
+            status_code=303,
         )
 
     @app.get("/recipients/new", response_class=HTMLResponse)
@@ -421,7 +542,11 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
         values = {
             "name": raw.get("name", ""),
             "solar_birthday": raw.get("solar_birthday") or "",
-            "reminder_days": raw.get("reminder_days", get_reminder_default()),
+            # 只有配置里**显式写过** reminder_days 才回填；没写就是"沿用全局默认"，
+            # 表单留空比回填一个具体数字更贴近事实。
+            "reminder_days": raw.get("reminder_days", ""),
+            # 旧配置没有这个字段，语义上就是"只发给我自己"
+            "audience": raw.get("audience") or "self",
             "note": raw.get("note") or "",
         }
         return render_form(request, values, {}, "edit", index=index)
@@ -430,15 +555,19 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
     async def api_lunar(solar: str = "") -> Dict[str, Any]:
         """阳历 → 农历查询，供表单实时校验与预览。
 
+        接受 8 位数字（``19900120``，界面上的写法）或 ``1990-01-20``，
+        统一归一化后再算 —— 前端可以原样把输入框内容发过来。
+
         **必须校验**：lunar_python 会把 ``1990-01-32`` 静默归一化成 1990-02-01，
         于是非法输入也能算出一个看似正常的农历（正月初六）。这里先用
         ``parse_iso_date`` 拒绝，避免把假数据当成结果显示给使用者。
         """
-        solar = (solar or "").strip()
-        if not solar:
+        raw = (solar or "").strip()
+        if not raw:
             return {"ok": False, "display": None, "hint": ""}
 
-        parsed = parse_iso_date(solar)
+        stored_input = normalize_solar_input(raw)
+        parsed = parse_iso_date(stored_input)
         if parsed is None:
             return {
                 "ok": False,
@@ -446,10 +575,10 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
                 "hint": INVALID_SOLAR_HINT,
             }
 
-        stored = solar_to_lunar(solar)
+        stored = solar_to_lunar(stored_input)
         if not stored:
             return {"ok": False, "display": None, "hint": "无法换算农历，请检查日期"}
-        if stored == solar:
+        if stored == stored_input:
             # 极端情况下若换算原地返回，说明输入被上游归一化过。
             return {"ok": False, "display": None, "hint": INVALID_SOLAR_HINT}
 
@@ -460,6 +589,8 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
             "ok": True,
             "display": lunar_display(stored),
             "stored": stored,
+            # 归一化后的存储格式，前端可用来对齐（8 位数字 → 1990-01-20）
+            "solar": stored_input,
             # 农历生日对应的阳历日期
             "next_solar": nxt.isoformat() if nxt else None,
             # 阳历生日的下一次
@@ -523,18 +654,15 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
 
         name = raw.get("name") or "未命名"
 
+        # 实时取配置：使用者可能刚在设置页改过渠道或凭据，
+        # 用启动时的快照会让「界面显示的」和「实际发送的」不一致。
+        config = app.state.current_config()
+
         try:
-            recipient = build_sendable_recipient(raw, resolve_receive_email(app.state.config))
+            recipient = build_sendable_recipient(raw, resolve_receive_email(config))
         except (ValueError, TypeError) as exc:
             return RedirectResponse(
                 f"/?error={name} 的配置不完整，无法发送：{exc}", status_code=303
-            )
-
-        if not recipient.email:
-            return RedirectResponse(
-                "/?error=没有可用的收件邮箱。请在 config.yml 的 resend 里填 "
-                "default_receive_email",
-                status_code=303,
             )
 
         extra = render_reminder_for(recipient, datetime.now().date())
@@ -543,7 +671,7 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
 
         try:
             senders = NotificationFactory(app.state.config_manager.get_templates_dir()).create_senders(
-                app.state.config
+                config
             )
         except Exception as exc:
             logger.exception("创建发送器失败")
@@ -551,7 +679,19 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
 
         if not senders:
             return RedirectResponse(
-                "/?error=没有可用的发送渠道，请检查 config.yml 的 start_notification",
+                "/?error=没有可用的发送渠道，请到设置页检查已启用渠道的凭据是否填好",
+                status_code=303,
+            )
+
+        # 邮箱只对邮件类渠道是必需的：只开手机推送时它可以是空的。
+        # 这里按**实际要用的发送器**判断，而不是无条件要求邮箱 ——
+        # 否则推送渠道永远走不到发送那一步就被拦下了。
+        needs_email = any(
+            type(s).__name__ in ("ResendSender", "EmailSender") for s in senders
+        )
+        if needs_email and not recipient.email:
+            return RedirectResponse(
+                "/?error=邮件渠道需要收件邮箱。请到设置页填写接收提醒的邮箱",
                 status_code=303,
             )
 
@@ -563,15 +703,28 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
         if failed and not sent:
             detail = "；".join(f"{r['channel']}: {r['detail']}" for r in failed)
             return RedirectResponse(f"/?error=发送失败：{detail}", status_code=303)
+
+        # 送达描述按渠道说清楚：推送没有"收件地址"这个概念。
+        # 邮箱取**当前配置**里的接收邮箱，而不是收件人条目上那个可能过期的值 ——
+        # 提醒本来就是发给使用者自己的，条目上的 email 只是历史遗留字段。
+        current_email = resolve_receive_email(config)
+        where_parts = []
+        if any(type(s).__name__ in ("ResendSender", "EmailSender") for s in senders):
+            where_parts.append(str(current_email or recipient.email or "邮箱未填"))
+        if any(type(s).__name__ == "WxPusherSender" for s in senders):
+            where_parts.append("手机")
+        where = " 和 ".join(where_parts) if where_parts else "已启用的渠道"
+
         if failed:
             detail = "；".join(f"{r['channel']}: {r['detail']}" for r in failed)
             return RedirectResponse(
-                f"/?notice=已通过 {', '.join(sent)} 发送给 {name}；{detail}", status_code=303
+                f"/?notice=已通过 {', '.join(sent)} 把 {name} 的提醒发到 {where}；{detail}",
+                status_code=303,
             )
 
-        channels = "、".join("邮件" if "Resend" in c or "Email" in c else c for c in sent)
+        channels = "、".join(_channel_label(c) for c in sent)
         return RedirectResponse(
-            f"/?notice=已通过{channels}把 {name} 的提醒发到 {recipient.email}",
+            f"/?notice=已通过{channels}把 {name} 的提醒发到 {where}",
             status_code=303,
         )
 

@@ -102,6 +102,51 @@ def parse_iso_date(value: object) -> Optional[datetime.date]:
         return None
 
 
+def normalize_solar_input(value: object) -> str:
+    """把使用者输入的生日归一化成**存储格式** ``YYYY-MM-DD``。
+
+    界面上要求填 8 位数字（``19900120``，身份证上的写法），但配置文件里存的
+    始终是带连字符的 ``1990-01-20`` —— ``config.yml`` 里已有数据、CLI 的
+    ``BirthdayChecker`` 也按这个格式解析，存储格式不能动。
+    所以转换只发生在**输入层**，由本函数统一负责。
+
+    同时容忍带连字符的写法：已有配置、旧书签里的表单值、以及 API 调用方
+    都可能传 ``1990-01-20``，不该因此报错。
+
+    **不做合法性判断** —— 日期是否真实存在由 ``parse_iso_date`` 决定，
+    这里只管格式转换。既不是 8 位数字也不是 ``YYYY-MM-DD`` 时原样返回，
+    交给后续校验去报错，避免在这里吞掉使用者的输入。
+    """
+    text = as_iso_text(value)
+    if not text:
+        return ""
+
+    # 已经是存储格式就直接用
+    if parse_iso_date(text) is not None:
+        return text
+
+    # 8 位纯数字：YYYYMMDD
+    digits = text.replace(" ", "")
+    if len(digits) == 8 and digits.isdigit():
+        # 格式对但日期可能不存在（如 19901320）—— 照样转成存储格式，
+        # 由 parse_iso_date 在校验层拒绝，这样报错信息能说清是"日期不合理"。
+        return f"{digits[:4]}-{digits[4:6]}-{digits[6:]}"
+
+    return text
+
+
+def format_solar_input(value: object) -> str:
+    """把存储格式 ``YYYY-MM-DD`` 反向格式化成输入框里的 8 位数字。
+
+    与 ``normalize_solar_input`` 是一对：一个负责存进去，一个负责填回表单。
+    无法识别时原样返回，避免把使用者的数据弄丢。
+    """
+    parsed = parse_iso_date(value)
+    if parsed is None:
+        return as_iso_text(value)
+    return f"{parsed.year:04d}{parsed.month:02d}{parsed.day:02d}"
+
+
 @lru_cache(maxsize=512)
 def solar_to_lunar(solar_str: str) -> Optional[str]:
     """阳历 ``YYYY-MM-DD`` → 农历 ``YYYY-MM-DD``（存储格式，与 lunar_birthday 一致）。

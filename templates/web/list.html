@@ -12,7 +12,7 @@
   <section class="meta" aria-label="通知配置">
     <span class="meta__label">通知渠道</span>
     {% for t in summary.types %}
-      <span class="chip">{{ '邮件' if t in ('email', 'resend') else ('微信推送' if t == 'serverchan' else t) }}</span>
+      <span class="chip">{{ channel_label(t) }}</span>
     {% endfor %}
     {# 三种发信方式任一生效都算"邮件已配置"，不能只看 SMTP #}
     {% if summary.resend_configured %}
@@ -56,6 +56,10 @@
           <tr class="row row--{{ r.status }}">
             <td data-label="姓名">
               <span class="name">{{ r.name }}</span>
+              {% if r.audience == 'group' %}
+                {# 广播给团体是不可撤销的，必须一眼看得出这条会发出去 #}
+                <span class="chip chip--sm chip--group" title="这条会广播给团体所有人">团体</span>
+              {% endif %}
               {% if r.note %}<span class="sub">{{ r.note }}</span>{% endif %}
             </td>
             <td data-label="生日">
@@ -101,7 +105,7 @@
               <span class="badge badge--{{ r.status }}">{{ r.status_text }}</span>
             </td>
             <td data-label="提醒窗口">
-              <span class="mono">{{ r.reminder_days }}</span> 天
+              <span class="mono">{{ r.reminder_days }}</span> 天{% if r.reminder_days_inherited %}<span class="sub muted">默认</span>{% endif %}
             </td>
             <td data-label="操作" class="row__actions">
               <a class="btn btn--sm" href="/recipients/{{ r.index }}/preview">预览</a>

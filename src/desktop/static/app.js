@@ -99,7 +99,7 @@
     } else {
       types.forEach(function (t) {
         var label = (t === 'email' || t === 'resend') ? '邮件'
-                  : (t === 'serverchan' ? '微信推送' : t);
+                  : (t === 'serverchan' ? '微信推送' : (t === 'wxpusher' ? '手机推送' : t));
         meta.appendChild(el('span', 'chip', label));
       });
     }
@@ -154,6 +154,10 @@
     var tdName = el('td', null);
     tdName.setAttribute('data-label', '姓名');
     tdName.appendChild(el('span', 'name', r.name));
+    // 广播给团体是不可撤销的，必须一眼看得出这条会发出去
+    if (r.audience === 'group') {
+      tdName.appendChild(el('span', 'chip chip--sm chip--group', '团体'));
+    }
     if (r.note) { tdName.appendChild(el('span', 'sub', r.note)); }
     tr.appendChild(tdName);
 
@@ -214,6 +218,9 @@
     tdWindow.setAttribute('data-label', '提醒窗口');
     tdWindow.appendChild(el('span', 'mono', r.reminder_days));
     tdWindow.appendChild(document.createTextNode(' 天'));
+    if (r.reminder_days_inherited) {
+      tdWindow.appendChild(el('span', 'sub muted', '默认'));
+    }
     tr.appendChild(tdWindow);
 
     // 操作
@@ -265,7 +272,10 @@
     clearFieldErrors();
 
     if (!isEdit) {
-      $('#f-reminder_days').value = '3';
+      // 留空 = 用设置里的默认值，不把当前默认值固化到这个人身上。
+      $('#f-reminder_days').value = '';
+      // 默认"只发给我自己"：广播出去的信息收不回来，想广播必须显式选
+      $('#f-audience').value = 'self';
       renderLunarNote('empty', null);
       show('form');
       $('#f-name').focus();
@@ -281,7 +291,10 @@
       var v = data.values || {};
       $('#f-name').value = v.name || '';
       $('#f-solar').value = v.solar_birthday || '';
-      $('#f-reminder_days').value = (v.reminder_days !== undefined && v.reminder_days !== null) ? v.reminder_days : 0;
+      // 没单独设置过的人留空展示，而不是回填一个具体数字
+      $('#f-reminder_days').value = (v.reminder_days !== undefined && v.reminder_days !== null) ? v.reminder_days : '';
+      // 旧记录没有 audience，语义上就是"只发给我自己"
+      $('#f-audience').value = v.audience || 'self';
       $('#f-note').value = v.note || '';
       if (v.solar_birthday) {
         runSolarCheck(v.solar_birthday);
@@ -324,6 +337,7 @@
       name: $('#f-name').value,
       solar_birthday: $('#f-solar').value,
       reminder_days: $('#f-reminder_days').value,
+      audience: $('#f-audience').value,
       note: $('#f-note').value
     };
   }
@@ -396,8 +410,19 @@
     });
   }
 
+  /* 生日按 8 位数字填（身份证上的写法）。
+     只拦非数字字符，粘贴带连字符的写法也接受；日期是否合法交给后端判断。 */
+  function digitsOnly(text) {
+    return String(text || '').replace(/[^0-9]/g, '').slice(0, 8);
+  }
+
   function onSolarInput() {
-    var value = $('#f-solar').value.trim();
+    var field = $('#f-solar');
+    var cleaned = digitsOnly(field.value);
+    if (cleaned !== field.value) {
+      field.value = cleaned;
+    }
+    var value = cleaned.trim();
     if (solarTimer) { clearTimeout(solarTimer); }
     if (!value) { lastSolar = null; renderLunarNote('empty', null); return; }
     solarTimer = setTimeout(function () { runSolarCheck(value); }, 220);
@@ -435,7 +460,7 @@
         mailBox.appendChild(el('p', 'muted', '没有可预览的邮件内容。'));
       }
 
-      $('#preview-wechat').textContent = res.serverchan_text || '（未配置微信推送）';
+      $('#preview-wechat').textContent = res.push_text || '（没能生成推送文案）';
       show('preview');
     });
   }
@@ -484,6 +509,26 @@
       $('#s-clear-key-wrap').classList.toggle('hidden', !v.has_resend_key);
       $('#s-clear-key').checked = false;
 
+      // 手机推送
+      $('#s-spt').value = '';
+      $('#s-spt-mask').textContent = v.wxpusher_spt_masked || '';
+      $('#s-spt-status').classList.toggle('hidden', !v.has_wxpusher_spt);
+      $('#s-clear-spt-wrap').classList.toggle('hidden', !v.has_wxpusher_spt);
+      $('#s-clear-spt').checked = false;
+
+      $('#s-app-token').value = '';
+      $('#s-app-token-mask').textContent = v.wxpusher_app_token_masked || '';
+      $('#s-app-token-status').classList.toggle('hidden', !v.has_wxpusher_app_token);
+      $('#s-clear-app-token-wrap').classList.toggle('hidden', !v.has_wxpusher_app_token);
+      $('#s-clear-app-token').checked = false;
+      // UID 不是密钥，原样回填方便核对
+      $('#s-self-uid').value = v.wxpusher_self_uid || '';
+
+      // 启用哪些渠道
+      var enabled = v.enabled_types || [];
+      $('#s-enable-resend').checked = enabled.indexOf('resend') !== -1;
+      $('#s-enable-wxpusher').checked = enabled.indexOf('wxpusher') !== -1;
+
       var select = $('#s-days');
       select.textContent = '';
       (data.days_options || []).forEach(function (opt) {
@@ -495,9 +540,14 @@
 
       var summary = data.summary || {};
       $('#s-summary').textContent = '';
-      var target = summary.resend_receive_email || summary.default_receive_email;
+      var parts = [];
+      if (enabled.indexOf('resend') !== -1) {
+        parts.push(summary.resend_receive_email || summary.default_receive_email || '邮箱（还没填）');
+      }
+      if (enabled.indexOf('wxpusher') !== -1) { parts.push('手机'); }
       $('#s-summary').appendChild(document.createTextNode(
-        '保存后可以发一封测试邮件，确认能送到 ' + (target || '接收邮箱') + '。这会真实发送一封邮件。'));
+        '保存后可以发一条测试提醒，确认能送到 ' + (parts.length ? parts.join(' 和 ') : '已启用的渠道')
+        + '。这会真实发送，会消耗渠道额度。'));
 
       clearSettingsErrors();
       show('settings');
@@ -507,13 +557,34 @@
   function clearSettingsErrors() {
     $$('#settings-form .field').forEach(function (f) { f.classList.remove('field--bad'); });
     $$('#settings-form .field__err').forEach(function (e) { e.remove(); });
+    [$('#s-key-err'), $('#s-spt-err'), $('#s-app-token-err'), $('#s-self-uid-err'),
+     $('#s-receive-err'), $('#s-enable-err')].forEach(function (e) {
+      if (e) { e.classList.add('hidden'); e.textContent = ''; }
+    });
   }
 
   function showSettingsErrors(errors) {
     clearSettingsErrors();
-    var map = { api_key: 's-key', default_receive_email: 's-receive', from_name: 's-from-name', from_email: 's-from-email' };
+    // 字段名 → 错误显示位置。用固定节点而不是「插到输入框后面」：
+    // 表单现在是分组结构，插到输入框后面容易落到错误的 fieldset 里。
+    var fixed = {
+      api_key: 's-key-err',
+      spt: 's-spt-err',
+      app_token: 's-app-token-err',
+      self_uid: 's-self-uid-err',
+      default_receive_email: 's-receive-err',
+      enabled_types: 's-enable-err'
+    };
+    var byInput = { from_name: 's-from-name', from_email: 's-from-email' };
+
     Object.keys(errors || {}).forEach(function (field) {
-      var input = document.getElementById(map[field] || '');
+      var box = document.getElementById(fixed[field] || '');
+      if (box) {
+        box.textContent = errors[field];
+        box.classList.remove('hidden');
+        return;
+      }
+      var input = byInput[field] ? document.getElementById(byInput[field]) : null;
       if (!input) { return; }
       var wrapper = input.closest('.field');
       if (wrapper) { wrapper.classList.add('field--bad'); }
@@ -527,12 +598,20 @@
 
     var values = {
       api_key: $('#s-key').value,
+      spt: $('#s-spt').value,
+      app_token: $('#s-app-token').value,
+      self_uid: $('#s-self-uid').value,
       default_receive_email: $('#s-receive').value,
       from_name: $('#s-from-name').value,
       from_email: $('#s-from-email').value,
-      default_reminder_days: $('#s-days').value
+      default_reminder_days: $('#s-days').value,
+      enabled_types: []
     };
+    if ($('#s-enable-resend').checked) { values.enabled_types.push('resend'); }
+    if ($('#s-enable-wxpusher').checked) { values.enabled_types.push('wxpusher'); }
     if ($('#s-clear-key').checked) { values.clear_api_key = true; }
+    if ($('#s-clear-spt').checked) { values.clear_spt = true; }
+    if ($('#s-clear-app-token').checked) { values.clear_app_token = true; }
 
     call('save_settings', values).then(function (res) {
       if (!res) { return; }

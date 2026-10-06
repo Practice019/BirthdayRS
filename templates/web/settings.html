@@ -5,7 +5,7 @@
   <div class="pagehead">
     <h1>设置</h1>
     <p class="pagehead__sub">
-      提醒是发给<strong>你自己</strong>的，不是发给收件人。这里填好之后，到时间就会发到这个邮箱。
+      提醒是发给<strong>你自己</strong>的，不是发给收件人。填好之后，到时间就会发到下面的邮箱和手机。
     </p>
   </div>
 
@@ -13,108 +13,262 @@
     <p class="flash flash--err" role="alert">{{ errors.__all__ }}</p>
   {% endif %}
 
-  <form class="form form--wide" method="post" action="/settings" novalidate>
-    <div class="field{% if errors.api_key %} field--bad{% endif %}">
-      <label for="api_key">Resend API Key</label>
+  <form id="settings-form" class="form form--wide" method="post" action="/settings" novalidate>
 
-      <div class="input-group">
-        <input id="api_key" name="api_key" type="text" class="mono"
-               value="" autocomplete="off" spellcheck="false"
-               placeholder="{% if values.has_resend_key %}已保存（留空则不修改）{% else %}re_开头的密钥{% endif %}"
-               data-secret-input
-               {% if errors.api_key %}aria-describedby="key-err" aria-invalid="true"{% endif %}>
+    {# ---------- 用哪些渠道发 ---------- #}
+    <fieldset class="fieldset">
+      <legend>用哪些方式提醒我</legend>
+      <p class="field__hint field__hint--top">
+        勾选的方式会同时发送。至少留一个，否则提醒发不出去。
+      </p>
 
-        {% if values.has_resend_key %}
-          <span class="input-status" data-state="ok">
-            <span class="input-status__icon" aria-hidden="true"></span>
-            <span class="input-status__text mono" data-secret-mask>{{ values.resend_key_masked }}</span>
-          </span>
-          <button type="button" class="btn btn--sm" data-secret-change>更换</button>
+      <label class="check">
+        <input type="checkbox" name="enabled_types" value="resend"
+               {% if 'resend' in (values.types or []) %}checked{% endif %}>
+        <span>邮件（Resend）</span>
+      </label>
+
+      <label class="check">
+        <input type="checkbox" name="enabled_types" value="wxpusher"
+               {% if 'wxpusher' in (values.types or []) %}checked{% endif %}>
+        <span>手机推送（WxPusher）</span>
+      </label>
+
+      {% if errors.enabled_types %}
+        <p class="field__err">{{ errors.enabled_types }}</p>
+      {% endif %}
+    </fieldset>
+
+    {# ---------- 手机推送 ---------- #}
+    <fieldset class="fieldset">
+      <legend>手机推送</legend>
+
+      <p class="field__hint field__hint--top">
+        两种用法可以同时配：<strong>应用</strong>负责把团体成员的生日广播给所有人，
+        <strong>推送令牌</strong>负责把私人朋友的提醒只发给你自己。
+      </p>
+
+      {# 当前能力概览：不让使用者去猜"我这么配，到底哪种发得出去" #}
+      <p class="capability">
+        {% if values.wxpusher_can_broadcast %}
+          <span class="capability__ok">✓ 可广播给团体所有人</span>
+        {% else %}
+          <span class="capability__gap">✗ 团体提醒发不出去（缺 appToken）</span>
+        {% endif %}
+        <br>
+        {% if values.wxpusher_can_self %}
+          <span class="capability__ok">✓ 可把私人提醒只发给你自己</span>
+        {% else %}
+          <span class="capability__gap">✗ 私人提醒发不出去（缺 self_uid 或 SPT）</span>
+        {% endif %}
+      </p>
+
+      <div class="field{% if errors.app_token %} field--bad{% endif %}">
+        <label for="app_token">应用密钥（appToken）</label>
+
+        <div class="input-group">
+          <input id="app_token" name="app_token" type="text" class="mono"
+                 value="" autocomplete="off" spellcheck="false"
+                 placeholder="{% if values.has_wxpusher_app_token %}已保存（留空则不修改）{% else %}AT_开头的密钥{% endif %}"
+                 data-secret-input
+                 {% if errors.app_token %}aria-describedby="apptoken-err" aria-invalid="true"{% endif %}>
+
+          {% if values.has_wxpusher_app_token %}
+            <span class="input-status" data-state="ok">
+              <span class="input-status__icon" aria-hidden="true"></span>
+              <span class="input-status__text mono" data-secret-mask>{{ values.wxpusher_app_token_masked }}</span>
+            </span>
+            <button type="button" class="btn btn--sm" data-secret-change>更换</button>
+          {% endif %}
+        </div>
+
+        <p class="field__hint">
+          在 <a href="https://wxpusher.zjiecode.com/admin" target="_blank" rel="noopener noreferrer">开发者后台</a>
+          创建应用后，从 appToken 页面复制。有它才能把「发给团体所有人」的提醒广播出去。
+        </p>
+        {% if errors.app_token %}<p class="field__err" id="apptoken-err">{{ errors.app_token }}</p>{% endif %}
+
+        {% if values.has_wxpusher_app_token %}
+          <label class="check">
+            <input type="checkbox" name="clear_app_token" value="1">
+            <span>清除已保存的应用密钥</span>
+          </label>
         {% endif %}
       </div>
 
-      <p class="field__hint">
-        在 <a href="https://resend.com/api-keys" target="_blank" rel="noopener noreferrer">resend.com/api-keys</a> 创建。
-        密钥只保存在本机 <code>config.yml</code>，界面不会显示完整值。
-      </p>
-      {% if errors.api_key %}<p class="field__err" id="key-err">{{ errors.api_key }}</p>{% endif %}
+      <div class="field{% if errors.self_uid %} field--bad{% endif %}">
+        <label for="self_uid">你自己的 UID</label>
+        <input id="self_uid" name="self_uid" type="text" class="mono"
+               value="{{ values.wxpusher_self_uid or '' }}" autocomplete="off" spellcheck="false"
+               placeholder="UID_开头，在应用后台的用户列表里"
+               {% if errors.self_uid %}aria-describedby="uid-err" aria-invalid="true"{% endif %}>
+        <p class="field__hint">
+          关注你自己的应用后，在应用后台的用户列表里能看到自己的 UID。
+          有它才能把「只发给我自己」的私人提醒定向发出来（否则会广播给所有人）。
+        </p>
+        {% if errors.self_uid %}<p class="field__err" id="uid-err">{{ errors.self_uid }}</p>{% endif %}
+      </div>
 
-      {% if values.has_resend_key %}
-        <label class="check">
-          <input type="checkbox" name="clear_api_key" value="1">
-          <span>清除已保存的密钥</span>
-        </label>
-      {% endif %}
-    </div>
+      {# SPT 收进折叠区：填了 appToken + UID 之后它完全不会被用到，
+         摆在主视图里只会让人以为"还得配一个"。但也不能删掉 ——
+         它是不建应用、只想发给自己时的唯一路径。 #}
+      <details class="advanced" {% if values.has_wxpusher_spt %}open{% endif %}>
+        <summary>
+          只想发给自己、不想建应用？
+          {% if values.has_wxpusher_spt %}<span class="chip chip--sm">已配置</span>{% endif %}
+        </summary>
 
-    <div class="field{% if errors.default_receive_email %} field--bad{% endif %}">
-      <label for="default_receive_email">接收提醒的邮箱 <span class="req" aria-hidden="true">*</span></label>
-      <input id="default_receive_email" name="default_receive_email" type="text"
-             inputmode="email" value="{{ values.resend_receive_email or '' }}"
-             placeholder="you@qq.com"
-             {% if errors.default_receive_email %}aria-describedby="recv-err" aria-invalid="true"{% endif %}>
-      <p class="field__hint">提醒就发到这里，填你自己的邮箱。</p>
-      {% if errors.default_receive_email %}
-        <p class="field__err" id="recv-err">{{ errors.default_receive_email }}</p>
-      {% endif %}
-    </div>
+        <div class="field{% if errors.spt %} field--bad{% endif %}">
+          <label for="spt">推送令牌（SPT）</label>
 
-    <div class="field">
-      <label for="from_name">发件人名字</label>
-      <input id="from_name" name="from_name" type="text"
-             value="{{ values.resend_from_name or '' }}"
-             placeholder="生日提醒"
-             maxlength="60">
-      <p class="field__hint">
-        收件人邮箱里显示的"发件人"。留空会显示成 onboarding，建议填上。
-      </p>
-      {% if errors.from_name %}<p class="field__err">{{ errors.from_name }}</p>{% endif %}
-    </div>
+          <div class="input-group">
+            <input id="spt" name="spt" type="text" class="mono"
+                   value="" autocomplete="off" spellcheck="false"
+                   placeholder="{% if values.has_wxpusher_spt %}已保存（留空则不修改）{% else %}SPT_开头的令牌{% endif %}"
+                   data-secret-input
+                   {% if errors.spt %}aria-describedby="spt-err" aria-invalid="true"{% endif %}>
 
-    <div class="field">
-      <label for="from_email">发件地址</label>
-      <input id="from_email" name="from_email" type="text" class="mono"
-             value="{{ values.resend_from_email or '' }}"
-             placeholder="onboarding@resend.dev">
-      <p class="field__hint">
-        留空就用 <code>onboarding@resend.dev</code>。要换成自己的域名，
-        需先在 <a href="https://resend.com/domains" target="_blank" rel="noopener noreferrer">resend.com/domains</a> 验证。
-      </p>
-      {% if errors.from_email %}<p class="field__err">{{ errors.from_email }}</p>{% endif %}
-    </div>
+            {% if values.has_wxpusher_spt %}
+              <span class="input-status" data-state="ok">
+                <span class="input-status__icon" aria-hidden="true"></span>
+                <span class="input-status__text mono" data-secret-mask>{{ values.wxpusher_spt_masked }}</span>
+              </span>
+              <button type="button" class="btn btn--sm" data-secret-change>更换</button>
+            {% endif %}
+          </div>
 
-    <div class="field{% if errors.default_reminder_days %} field--bad{% endif %}">
-      <label for="default_reminder_days">默认提前几天提醒</label>
-      <input id="default_reminder_days" name="default_reminder_days" type="number"
-             min="0" max="365"
-             value="{{ values.default_reminder_days if values.default_reminder_days is not none else 3 }}"
-             {% if errors.default_reminder_days %}aria-describedby="days-err" aria-invalid="true"{% endif %}>
-      <p class="field__hint">收件人没单独设置时用它。0 表示只在生日当天提醒。</p>
-      {% if errors.default_reminder_days %}
-        <p class="field__err" id="days-err">{{ errors.default_reminder_days }}</p>
-      {% endif %}
-    </div>
+          <p class="field__hint">
+            在 <a href="https://wxpusher.zjiecode.com" target="_blank" rel="noopener noreferrer">wxpusher.zjiecode.com</a>
+            扫码即得，手机装上它的 App 用同一个微信登录就能收。
+            <strong>只有在没填上面 appToken 时才需要它</strong> ——
+            SPT 天生只能发给你自己，没法广播给团体。
+          </p>
+          {% if errors.spt %}<p class="field__err" id="spt-err">{{ errors.spt }}</p>{% endif %}
 
-    <div class="actions">
-      <button type="submit" class="btn btn--primary">保存</button>
-    </div>
+          {% if values.has_wxpusher_spt %}
+            <label class="check">
+              <input type="checkbox" name="clear_spt" value="1">
+              <span>清除已保存的推送令牌</span>
+            </label>
+          {% endif %}
+        </div>
+      </details>
+    </fieldset>
+
+    {# ---------- 邮件 ---------- #}
+    <fieldset class="fieldset">
+      <legend>邮件</legend>
+
+      <div class="field{% if errors.api_key %} field--bad{% endif %}">
+        <label for="api_key">Resend API Key</label>
+
+        <div class="input-group">
+          <input id="api_key" name="api_key" type="text" class="mono"
+                 value="" autocomplete="off" spellcheck="false"
+                 placeholder="{% if values.has_resend_key %}已保存（留空则不修改）{% else %}re_开头的密钥{% endif %}"
+                 data-secret-input
+                 {% if errors.api_key %}aria-describedby="key-err" aria-invalid="true"{% endif %}>
+
+          {% if values.has_resend_key %}
+            <span class="input-status" data-state="ok">
+              <span class="input-status__icon" aria-hidden="true"></span>
+              <span class="input-status__text mono" data-secret-mask>{{ values.resend_key_masked }}</span>
+            </span>
+            <button type="button" class="btn btn--sm" data-secret-change>更换</button>
+          {% endif %}
+        </div>
+
+        <p class="field__hint">
+          在 <a href="https://resend.com/api-keys" target="_blank" rel="noopener noreferrer">resend.com/api-keys</a> 创建。
+          密钥只保存在本机 <code>config.yml</code>，界面不会显示完整值。
+        </p>
+        {% if errors.api_key %}<p class="field__err" id="key-err">{{ errors.api_key }}</p>{% endif %}
+
+        {% if values.has_resend_key %}
+          <label class="check">
+            <input type="checkbox" name="clear_api_key" value="1">
+            <span>清除已保存的密钥</span>
+          </label>
+        {% endif %}
+      </div>
+
+      <div class="field{% if errors.default_receive_email %} field--bad{% endif %}">
+        <label for="default_receive_email">接收提醒的邮箱</label>
+        <input id="default_receive_email" name="default_receive_email" type="text"
+               inputmode="email" value="{{ values.resend_receive_email or '' }}"
+               placeholder="you@qq.com"
+               {% if errors.default_receive_email %}aria-describedby="recv-err" aria-invalid="true"{% endif %}>
+        <p class="field__hint">提醒就发到这里，填你自己的邮箱。只开手机推送时可以不填。</p>
+        {% if errors.default_receive_email %}
+          <p class="field__err" id="recv-err">{{ errors.default_receive_email }}</p>
+        {% endif %}
+      </div>
+
+      <div class="field">
+        <label for="from_name">发件人名字</label>
+        <input id="from_name" name="from_name" type="text"
+               value="{{ values.resend_from_name or '' }}"
+               placeholder="生日提醒"
+               maxlength="60">
+        <p class="field__hint">
+          收件人邮箱里显示的"发件人"。留空会显示成 onboarding，建议填上。
+        </p>
+        {% if errors.from_name %}<p class="field__err">{{ errors.from_name }}</p>{% endif %}
+      </div>
+
+      <div class="field">
+        <label for="from_email">发件地址</label>
+        <input id="from_email" name="from_email" type="text" class="mono"
+               value="{{ values.resend_from_email or '' }}"
+               placeholder="onboarding@resend.dev">
+        <p class="field__hint">
+          留空就用 <code>onboarding@resend.dev</code>。要换成自己的域名，
+          需先在 <a href="https://resend.com/domains" target="_blank" rel="noopener noreferrer">resend.com/domains</a> 验证。
+        </p>
+        {% if errors.from_email %}<p class="field__err">{{ errors.from_email }}</p>{% endif %}
+      </div>
+    </fieldset>
+
+    {# ---------- 提醒时机 ---------- #}
+    <fieldset class="fieldset">
+      <legend>提醒时机</legend>
+
+      <div class="field{% if errors.default_reminder_days %} field--bad{% endif %}">
+        <label for="default_reminder_days">默认提前几天提醒</label>
+        <input id="default_reminder_days" name="default_reminder_days" type="number"
+               min="0" max="365"
+               value="{{ values.default_reminder_days if values.default_reminder_days is not none else 3 }}"
+               {% if errors.default_reminder_days %}aria-describedby="days-err" aria-invalid="true"{% endif %}>
+        <p class="field__hint">收件人没单独设置时用它。0 表示只在生日当天提醒。</p>
+        {% if errors.default_reminder_days %}
+          <p class="field__err" id="days-err">{{ errors.default_reminder_days }}</p>
+        {% endif %}
+      </div>
+    </fieldset>
   </form>
 
   <section class="panel">
     <h2 class="panel__title">验证配置</h2>
     <div class="panel__body">
       <p class="muted">
-        保存后可以发一封测试邮件，确认能送到
-        {% if summary.resend_receive_email or summary.default_receive_email %}
-          <span class="mono">{{ summary.resend_receive_email or summary.default_receive_email }}</span>
-        {% else %}
-          接收邮箱
+        保存后可以发一条测试提醒，确认能送到
+        {% set targets = [] %}
+        {% if 'resend' in (summary.types or []) %}
+          {% if summary.resend_receive_email or summary.default_receive_email %}
+            {% set _ = targets.append(summary.resend_receive_email or summary.default_receive_email) %}
+          {% else %}
+            {% set _ = targets.append('邮箱（还没填）') %}
+          {% endif %}
         {% endif %}
-        。这会真实发送一封邮件。
+        {% if 'wxpusher' in (summary.types or []) %}
+          {% set _ = targets.append('手机') %}
+        {% endif %}
+        {% if targets %}{{ targets | join(' 和 ') }}{% else %}已启用的渠道{% endif %}
+        。这会真实发送，会消耗渠道额度。
       </p>
       <form method="post" action="/settings/test" class="js-test-send"
-            data-name="测试邮件">
-        <button type="submit" class="btn">发送测试邮件</button>
+            data-name="测试提醒">
+        <button type="submit" class="btn">发送测试提醒</button>
       </form>
     </div>
   </section>
@@ -123,10 +277,18 @@
     <p class="foot-note">
       当前生效渠道：
       {% for t in summary.types %}
-        <span class="chip">{{ '邮件' if t in ('email', 'resend') else ('微信推送' if t == 'serverchan' else t) }}</span>
+        <span class="chip">{{ channel_label(t) }}</span>
       {% endfor %}
     </p>
   {% endif %}
+
+  {# 吸底保存按钮。放在 form **外面**、页面内容的**最后**：sticky 的吸附范围由父元素
+     决定 —— 留在 form 里的话滚过表单它就跟着滚走了，而表单下面还有「验证配置」
+     要操作（那正是最想点保存的时刻）。
+     用 form="settings-form" 依旧提交上面那个表单，纯 HTML5 特性，不依赖 JS。 #}
+  <div class="actionbar">
+    <button type="submit" form="settings-form" class="btn btn--primary">保存</button>
+  </div>
 {% endblock %}
 
 {% block scripts %}

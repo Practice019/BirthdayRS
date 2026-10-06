@@ -43,6 +43,9 @@ config.resend*.yml
 .env
 .env.*
 
+# 运行时数据目录（compose 挂载进来）：配置与日志都在这里，同样不进镜像
+data
+
 # 编辑器
 .idea
 .vscode

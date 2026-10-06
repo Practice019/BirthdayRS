@@ -23,6 +23,18 @@ class ConfigManager:
             self._config = self.load_config()
         return self._config
 
+    def reload(self) -> Config:
+        """丢弃缓存并重新读取配置文件。
+
+        **改了 config.yml 之后必须调用它**，否则本进程里拿到的还是旧对象 ——
+        表现为「界面上改了设置，实际发送仍用旧凭据」。
+
+        以前各处都是直接赋 `_config = None` 来失效缓存，那是把内部实现当公开接口用；
+        收口到这里，以后换缓存策略（比如加 mtime 检查）只需要改一个地方。
+        """
+        self._config = None
+        return self.config
+
     def load_config(self) -> Config:
         """加载配置文件"""
         try:
@@ -80,6 +92,15 @@ class ConfigManager:
                     return False
                 if not config.resend_config.api_key:
                     logger.error("Resend config present but api_key is empty")
+                    return False
+
+            # 验证 WxPusher 配置
+            if "wxpusher" in config.notification_types:
+                if not config.wxpusher_config:
+                    logger.error("WxPusher notification enabled but config missing")
+                    return False
+                if not (config.wxpusher_config.spt or "").strip():
+                    logger.error("WxPusher config present but spt is empty")
                     return False
 
             logger.info("Config validation passed")

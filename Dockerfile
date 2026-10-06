@@ -67,7 +67,15 @@ ENV PATH="/app/.venv/bin:$PATH" \
 EXPOSE 8000
 
 # 默认起 Web 管理台，浏览器访问 http://<主机>:8000
+#
+# **访问令牌默认开启**：管理台能改配置（里面有 API Key）、能触发真实发信，
+# 而容器必然监听 0.0.0.0，不对任何能连到端口的人设防是不行的。
+# 令牌在启动时随机生成并打印到容器日志：
+#   docker logs <容器名> | grep token
+# 想固定令牌（重启后书签不失效）就加 -e BIRTHDAYRS_TOKEN=<你的令牌>。
+# 确实不需要鉴权（例如只绑本机、或前面已有带鉴权的反代）时用 --no-auth 关掉。
+#
 # 若只想要"跑一次检查就退出"（交给 cron），覆盖命令即可：
-#   docker run --rm -v ...:/app/config.yml <image> run --config /app/config.yml
+#   docker run --rm -v ...:/app/data birthdayrs run --config /app/data/config.yml
 ENTRYPOINT ["/app/.venv/bin/python", "-m", "src.main"]
 CMD ["web", "--config", "/app/config.yml", "--host", "0.0.0.0", "--port", "8000"]

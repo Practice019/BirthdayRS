@@ -133,8 +133,7 @@ class BirthdayReminder:
         """重新加载配置"""
         try:
             # 重新加载配置
-            self.config_manager._config = None
-            self.config = self.config_manager.config
+            self.config = self.config_manager.reload()
 
             # 重新初始化组件
             self._initialize_components()
@@ -222,7 +221,9 @@ def info(config):
 @click.option('--host', help='监听地址', default="127.0.0.1")
 @click.option('--port', '-p', help='监听端口', default=8000, type=int)
 @click.option('--reload', help='代码改动后自动重载（开发用）', is_flag=True, default=False)
-def web(config, host, port, reload):
+@click.option('--token', help='访问令牌；不指定则每次启动随机生成', default=None)
+@click.option('--no-auth', 'no_auth', help='关闭访问令牌鉴权（仅本机自用）', is_flag=True, default=False)
+def web(config, host, port, reload, token, no_auth):
     """启动管理台（浏览器界面）"""
     try:
         import uvicorn
@@ -232,14 +233,32 @@ def web(config, host, port, reload):
         print("请先运行: uv sync")
         sys.exit(1)
 
+    from src.web.auth import access_url, resolve_token
+
+    # 默认总是启用鉴权：这个界面能改配置、能触发真实发信，不该对任何能连到端口的人开放。
+    auth_token = None if no_auth else resolve_token(token)
+
     try:
-        app = create_app(config)
+        app = create_app(config, token=auth_token)
     except Exception as e:
         logger.error(f"Failed to start web UI: {e}")
         print(f"❌ 启动失败: {e}")
         sys.exit(1)
 
-    print(f"管理台已启动: http://{host}:{port}")
+    if auth_token:
+        url = access_url(host, port, auth_token)
+        # 同时走 stdout 与 logger：前者给人看，后者进 birthday_reminder.log，
+        # 容器里 docker logs 能看到，重启后还能翻出来。
+        print("=" * 68)
+        print(f"管理台已启动: {url}")
+        print("上面这个地址带访问令牌，打开一次即可（浏览器会记住 30 天）。")
+        print("令牌也可用 --token 或环境变量 BIRTHDAYRS_TOKEN 固定，重启后书签不失效。")
+        print("=" * 68)
+        logger.info("管理台已启动: %s", url)
+    else:
+        print(f"管理台已启动: http://{host}:{port} （鉴权已关闭）")
+        logger.warning("管理台已启动且未启用鉴权，请勿对公网开放")
+
     print("按 Ctrl+C 停止。")
     uvicorn.run(app, host=host, port=port, reload=reload, log_level="info")
 

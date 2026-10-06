@@ -6,7 +6,7 @@
 [![Ruff](https://img.shields.io/badge/code%20style-flake8-orange.svg)](.flake8)
 
 支持**农历与阳历**双历法的生日提醒系统。只需填身份证上的出生年月日，农历生日自动换算，
-到时间通过邮件或微信推送提醒你。
+到时间通过邮件或手机推送提醒你。
 
 > 提醒是发给**你自己**的，不是发给过生日的人。这是一个"别忘了别人生日"的工具。
 
@@ -43,7 +43,7 @@
 | 自动换算 | 只填阳历生日，农历由程序推导。不需要查万年历 |
 | 农历闰月 | 闰月按绝对月份记录，保证这些人每年都有提醒 |
 | 传统信息 | 生肖、干支纪年/月/日/时、节气、节日、星座、星期 |
-| 三种通知 | Resend（HTTP API）、SMTP 邮件、[ServerChan](https://sct.ftqq.com/) 微信推送 |
+| 四种通知 | Resend（HTTP API）、[WxPusher](https://wxpusher.zjiecode.com) 手机推送、SMTP 邮件、[ServerChan](https://sct.ftqq.com/) 微信推送 |
 | 桌面应用 | 双击启动，原生窗口，**不占用任何端口** |
 | 网页管理台 | 时间轴总览、增删改、提醒预览、测试发送 |
 | 容器部署 | 多阶段构建，镜像里只装运行必需的依赖 |
@@ -95,13 +95,36 @@ Windows 上直接双击项目根目录的 **`BirthdayRS.bat`**。
 ### 2. 网页管理台
 
 ```bash
-uv run python -m src.main web --config config.yml   # http://127.0.0.1:8000
+uv run python -m src.main web --config config.yml
+```
+
+输出类似：
+
+```
+====================================================================
+管理台已启动: http://127.0.0.1:8000/?token=xxxxxxxx...
+上面这个地址带访问令牌，打开一次即可（浏览器会记住 30 天）。
+====================================================================
 ```
 
 同一个界面的浏览器版本，**会占用端口**，适合放在局域网或服务器上。
 
-> ⚠️ **它没有身份验证**。默认只绑定 `127.0.0.1`。若要对局域网开放，
-> 请自己加一层访问控制（反向代理 + Basic Auth 之类）。
+#### 访问令牌（默认开启）
+
+这个界面能改配置（里面有 API Key）、能触发真实发信，所以启动时会生成一个随机
+令牌，**必须带上它才能打开**。首次访问打印出来的 `?token=...` 地址，校验通过后
+会换发一个 30 天的 cookie，之后直接访问域名即可。
+
+| 需求 | 做法 |
+|---|---|
+| 固定令牌，重启后书签不失效 | `--token <你的令牌>` 或环境变量 `BIRTHDAYRS_TOKEN` |
+| 完全不要鉴权（只绑本机自用） | `--no-auth` |
+| 容器里取令牌 | `docker logs <容器名> \| grep token` |
+
+> 令牌用 URL 传递，会进浏览器历史与可能的反代日志。所以首次访问后立刻换发
+> HttpOnly cookie，并把 token 从地址栏跳掉，把暴露窗口缩到一次。
+> cookie 未加 `Secure`（内网 http 部署下加了就发不出去）；挂在 https 反代后面时
+> 建议在反代层再收一道口。
 
 ### 3. 只跑定时任务（服务器场景）
 
@@ -145,6 +168,10 @@ recipients:
     note: 大学同学                     # 只给自己看的备注
 ```
 
+> **界面上填的是 8 位数字**（`19900120`，跟身份证一样），程序会转成这里的
+> `1990-01-20` 存进配置文件。手写配置文件时两种写法都能读，但程序自己写回的
+> 是带连字符的那种。
+
 ### 两个关键约定
 
 **`solar_birthday` 是唯一的数据来源。** 网页与桌面界面都从它推导农历。
@@ -159,7 +186,9 @@ recipients:
 
 ## 通知渠道
 
-### Resend（推荐）
+可以同时启用多个，`start_notification` 里逗号分隔；设置页能勾选邮件与手机推送。
+
+### 邮件：Resend（推荐）
 
 最省事的方式，注册后拿一个 API Key 即可，不用配 SMTP。
 
@@ -173,15 +202,53 @@ recipients:
 发件人可以自定义显示名（`from_name`），这样收件人看到的是「生日提醒」而不是
 「onboarding」。
 
+### 手机推送：WxPusher（推荐，免费额度宽松）
+
+手机装上它的 App（[下载页](https://wxpusher.zjiecode.com/download/)），
+用**同一个微信**登录，即可接收。
+
+这个渠道有两种能力，按需配置，也可以都配：
+
+| 填什么 | 得到什么能力 | 从哪拿 |
+|---|---|---|
+| `app_token` | 把「发给团体所有人」的提醒**广播**给应用的所有关注者 | [开发者后台](https://wxpusher.zjiecode.com/admin) 创建应用后，在 appToken 页面 |
+| `self_uid` | 把「只发给我自己」的提醒**定向**发给你自己 | 关注自己的应用后，在应用后台的用户列表里 |
+| `spt` | 没有 `self_uid` 时，作为「只发给我」的兜底 | 官网扫码即得 |
+
+免费额度：单个用户单日约 3000 条内正常提醒，接口限流约 2 次/秒。
+
+> ⚠️ **请用它的 App 通道，不要用「微信 ClawBot」通道。**
+> ClawBot 每次激活只有 24 小时有效、且每 10 条就要在微信里手动重新激活；
+> 对「一个月可能才触发一次」的生日提醒会**静默失效** ——
+> 接口返回成功，人却收不到。
+
+#### 每条记录可以选「发给谁」
+
+添加/编辑收件人时有一个「这条提醒发给谁」：
+
+- **只发给我自己**（默认）：私人朋友。只有你收到，别人看不到。
+- **发给团体所有人**：互相认识的团体成员。广播给推送应用里所有关注者。
+
+时间轴上广播的那条会带一个「团体」标记 —— 广播出去收不回来，得能一眼看出来。
+
+> 默认值是「只发给我自己」，不是广播。旧配置里没有这个字段的记录也按前者处理：
+> 泄露私人信息不可撤销，默认值必须偏向保守的那一侧。
+
+### 微信：ServerChan
+
+[ServerChan](https://sct.ftqq.com/) 微信扫码登录拿到 SendKey（`SCT` 开头），
+推送直接到微信，不需要域名。免费版每天 5 条。
+
+`SendKey` 是 `sctp` 开头（Server酱³）时程序会自动改用对应端点。
+此渠道在 `config.yml` 里手工维护，设置页不提供。
+
 ### SMTP
 
 用你自己的邮箱服务商。QQ 邮箱需要在设置里开启 SMTP 并生成**授权码**，
-不能直接用登录密码。
+不能直接用登录密码。此渠道在 `config.yml` 里手工维护，设置页不提供。
 
-### ServerChan
-
-[ServerChan](https://sct.ftqq.com/) 微信扫码登录拿到 SENDKEY，推送直接到微信。
-不需要域名，适合只想在手机上收提醒的场景。
+> **设置页只放「让项目能正常发提醒所必需」的东西**：渠道凭据、接收邮箱、
+> 发件人信息、默认提前天数、启用哪些渠道。有合理默认值、填不填都能跑的不在此列。
 
 ## 命令行
 
@@ -197,6 +264,9 @@ python -m src.main <命令> [选项]
 ```
 
 所有命令都接受 `-c/--config` 指定配置文件路径，默认 `config.yml`。
+
+`web` 命令另有：`--host`（默认 `127.0.0.1`）、`--port/-p`（默认 `8000`）、
+`--token`（固定访问令牌）、`--no-auth`（关闭令牌鉴权）、`--reload`（开发用热重载）。
 
 ## 开发
 
@@ -230,24 +300,39 @@ uv run --with psutil python tools/verify_desktop.py
 容器里没有显示器和 WebView2，桌面窗口跑不起来，所以容器部署 = 网页界面。
 
 ```bash
+# 准备配置：配置放在 data/ 目录里，挂载整个目录
+mkdir -p data && cp config.example.yml data/config.yml
+# 编辑 data/config.yml，填上你的 API Key 与接收邮箱
+
 # 方式一：用已构建好的镜像（CI 自动推送到 GitHub Container Registry）
 docker run -d --name birthdayrs-web \
   -p 8000:8000 \
-  -v $PWD/config.yml:/app/config.yml \
+  -v $PWD/data:/app/data \
+  -w /app/data \
   -e TZ=Asia/Shanghai \
-  ghcr.io/practice019/birthdayrs:latest web --config /app/config.yml --host 0.0.0.0
+  ghcr.io/practice019/birthdayrs:latest web --config /app/data/config.yml --host 0.0.0.0
+
+# 取访问地址（带令牌）
+docker logs birthdayrs-web | grep token
 
 # 方式二：自己构建
 docker compose build
-docker compose up -d birthdayrs-web     # 打开 http://localhost:8000
+docker compose --profile web up -d
+docker compose logs birthdayrs-web | grep token
 ```
+
+> **为什么要挂目录而不是挂单个 config.yml 文件？**
+> 界面的写操作走「临时文件 + `os.replace()`」原子替换
+> （`src/web/repository.py`），而绑定挂载的**单个文件**无法被 rename 覆盖，
+> 会抛 `OSError: [Errno 16] Device or resource busy` —— 表现为增删收件人一律 500。
+> 挂目录就没有这个问题。用 `-w /app/data` 是让日志也落在挂载目录里。
 
 只要定时发送、不需要网页（镜像更小）：
 
 ```bash
 docker build --build-arg INSTALL_WEB=0 -t birthdayrs .
-docker run --rm -v $PWD/config.yml:/app/config.yml \
-  -e TZ=Asia/Shanghai birthdayrs run --config /app/config.yml
+docker run --rm -v $PWD/data:/app/data -w /app/data \
+  -e TZ=Asia/Shanghai birthdayrs run --config /app/data/config.yml
 ```
 
 镜像标签：`latest`（默认分支）与 `sha-<短哈希>`（每次提交）。
@@ -287,7 +372,9 @@ CI 通过后自动推送，见 [Actions](https://github.com/Practice019/Birthday
 想立刻验证，用桌面/网页界面里的**测试发送**按钮。
 
 **网页界面安全吗？**
-没有身份验证，默认只绑本机。对外暴露前请自行加访问控制。
+启动时会生成一个随机访问令牌，必须带上它才能打开（见「网页管理台 · 访问令牌」）。
+令牌用 `docker logs <容器名> | grep token` 取，或自己用 `BIRTHDAYRS_TOKEN` 固定。
+注意令牌保护的是"能不能进这个界面"；若要在公网暴露，仍建议在反代层再加一道。
 
 **容器里能跑桌面应用吗？**
 不能。需要宿主机的 WebView2/WKWebView 和显示器。容器只用网页界面。

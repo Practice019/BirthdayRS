@@ -34,7 +34,8 @@
 
       <div class="input-group">
         <input id="solar_birthday" name="solar_birthday" type="text" class="mono"
-               placeholder="1990-01-20" value="{{ values.solar_birthday or '' }}"
+               inputmode="numeric" autocomplete="off"
+               placeholder="19900120" value="{{ values.solar_birthday or '' }}"
                data-lunar-preview
                {% if errors.solar_birthday %}aria-describedby="solar-err" aria-invalid="true"{% endif %}>
         {# 输入框右侧的即时校验指示：图标 + 短词，配文字避免只靠颜色传达 #}
@@ -76,11 +77,34 @@
     <div class="field{% if errors.reminder_days %} field--bad{% endif %}">
       <label for="reminder_days">提前几天提醒</label>
       <input id="reminder_days" name="reminder_days" type="number" min="0" max="365"
-             value="{{ values.reminder_days if values.reminder_days is not none else 0 }}"
+             placeholder="{{ default_reminder_days }}"
+             value="{{ values.reminder_days if values.reminder_days is not none else '' }}"
              {% if errors.reminder_days %}aria-describedby="days-err" aria-invalid="true"{% endif %}>
-      <p class="field__hint">0 表示只在生日当天提醒</p>
+      <p class="field__hint">
+        留空就用设置里的默认值（当前 {{ default_reminder_days }} 天）；填 0 表示只在生日当天提醒。
+      </p>
       {% if errors.reminder_days %}
         <p class="field__err" id="days-err">{{ errors.reminder_days }}</p>
+      {% endif %}
+    </div>
+
+    <div class="field{% if errors.audience %} field--bad{% endif %}">
+      <label for="audience">这条提醒发给谁</label>
+      <select id="audience" name="audience"
+              {% if errors.audience %}aria-describedby="audience-err" aria-invalid="true"{% endif %}>
+        <option value="self" {% if (values.audience or 'self') == 'self' %}selected{% endif %}>
+          只发给我自己
+        </option>
+        <option value="group" {% if values.audience == 'group' %}selected{% endif %}>
+          发给团体所有人
+        </option>
+      </select>
+      <p class="field__hint">
+        互相认识的团体选"发给团体所有人"，会广播给推送应用里所有关注者；
+        私人朋友选"只发给我自己"，不会被别人看到。
+      </p>
+      {% if errors.audience %}
+        <p class="field__err" id="audience-err">{{ errors.audience }}</p>
       {% endif %}
     </div>
 

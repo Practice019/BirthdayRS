@@ -42,6 +42,10 @@ class NotificationFactory:
                 from src.notification.sender_resend import ResendSender
                 return ResendSender(config.resend_config, self.templates_dir)
 
+            elif notify_type == "wxpusher" and config.wxpusher_config:
+                from src.notification.sender_wxpusher import WxPusherSender
+                return WxPusherSender(config.wxpusher_config)
+
             else:
                 logger.warning(f"Unknown notification type or missing config: {notify_type}")
                 return None
