@@ -186,9 +186,12 @@ document.querySelectorAll('form.js-test-send').forEach(function (form) {
    禁用 JS 时勾选框仍然可用（能选中），批量按钮用 form="bulk-form" 关联，
    提交时把勾选索引写进隐藏字段 —— 所以禁用 JS 也能批量提交。 */
 (function () {
-  var form = document.getElementById('bulk-form');
-  var bar = document.getElementById('bulkbar');
-  if (!form || !bar) {
+  // 操作条本身就是 form（id="bulk-form" class="bulkbar"）—— 不要再找一个
+  // 单独的 #bulkbar：曾经两者并存，重构模板时 id 被合并掉了，JS 拿不到就
+  // 整个 IIFE 提前 return，表现为"点卡片不勾选"（所有批量逻辑一起失效）。
+  var bar = document.getElementById('bulk-form');
+  var form = bar;
+  if (!form) {
     return;
   }
 
