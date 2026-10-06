@@ -230,6 +230,14 @@ uv run --with psutil python tools/verify_desktop.py
 容器里没有显示器和 WebView2，桌面窗口跑不起来，所以容器部署 = 网页界面。
 
 ```bash
+# 方式一：用已构建好的镜像（CI 自动推送到 GitHub Container Registry）
+docker run -d --name birthdayrs-web \
+  -p 8000:8000 \
+  -v $PWD/config.yml:/app/config.yml \
+  -e TZ=Asia/Shanghai \
+  ghcr.io/practice019/birthdayrs:latest web --config /app/config.yml --host 0.0.0.0
+
+# 方式二：自己构建
 docker compose build
 docker compose up -d birthdayrs-web     # 打开 http://localhost:8000
 ```
@@ -237,15 +245,21 @@ docker compose up -d birthdayrs-web     # 打开 http://localhost:8000
 只要定时发送、不需要网页（镜像更小）：
 
 ```bash
-docker build -t birthdayrs .
+docker build --build-arg INSTALL_WEB=0 -t birthdayrs .
 docker run --rm -v $PWD/config.yml:/app/config.yml \
   -e TZ=Asia/Shanghai birthdayrs run --config /app/config.yml
 ```
+
+镜像标签：`latest`（默认分支）与 `sha-<短哈希>`（每次提交）。
+CI 通过后自动推送，见 [Actions](https://github.com/Practice019/BirthdayRS/actions)。
 
 **`config.yml` 必须用挂载注入，不要打进镜像** —— 它含 API Key 与授权码。
 
 > 不要写 `VOLUME ["/app/config.yml"]`：Docker 的 `VOLUME` 把路径当**目录**，
 > 对文件路径会创建同名目录，程序读配置会抛 `IsADirectoryError`。
+>
+> `templates/web/` 必须留在构建上下文里（Web 界面的 HTML 模板）；
+> `.dockerignore` 已把 `src/desktop/` 排除掉，容器里用不到它。
 
 ### 定时执行
 
