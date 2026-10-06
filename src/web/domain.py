@@ -57,6 +57,9 @@ _KNOWN_FIELDS = {
     "lunar_birthday",
     "reminder_days",
     "template_file",
+    # audience 决定提醒广播还是定向。漏掉它 _recipient_from_raw 会过滤掉这个键，
+    # Recipient 退回默认 self —— 界面上选了「团体」的记录在测试发送时只发给自己。
+    "audience",
 }
 
 #: 中文星期，索引对应 date.weekday()（0 = 周一）。
@@ -570,6 +573,10 @@ def build_sendable_recipient(raw: Dict[str, Any], fallback_email: Optional[str])
     - 农历用阳历推导值（与时间轴、预览同一口径）
     - 生日对象本人没有邮箱时，用配置里的接收邮箱顶上 —— 提醒是发给使用者的，
       收件人记录里不再有邮箱字段，所以这一步是常态而非例外
+    - **``audience`` 必须带上**：它决定这条提醒是广播给团体还是只发给使用者自己。
+      漏掉它会让 ``Recipient`` 退回默认值 ``self``，于是界面上选了「团体」的记录
+      在测试发送时**只发给使用者自己**，而广播路径（run 命令）却是对的 ——
+      同一份配置两种行为，很难发现。
     """
     recipient = _recipient_from_raw(raw)
 
@@ -584,6 +591,7 @@ def build_sendable_recipient(raw: Dict[str, Any], fallback_email: Optional[str])
         reminder_days=recipient.reminder_days,
         template_file=recipient.template_file,
         note=recipient.note,
+        audience=getattr(recipient, "audience", "self") or "self",
     )
 
 

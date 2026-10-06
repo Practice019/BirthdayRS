@@ -709,6 +709,11 @@ def create_app(config_path: Optional[str] = None, token: Optional[str] = None) -
         # 用启动时的快照会让「界面显示的」和「实际发送的」不一致。
         config = app.state.current_config()
 
+        # 测试发送是"现在就验证一下"，关注者列表要用最新的 ——
+        # 刚有人关注时若命中缓存，广播看起来"少发给了几个人"，
+        # 很容易被当成 bug。
+        clear_followers_cache()
+
         try:
             recipient = build_sendable_recipient(raw, resolve_receive_email(config))
         except (ValueError, TypeError) as exc:

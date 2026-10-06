@@ -335,6 +335,8 @@ class AppApi:
 
         name = raw.get("name") or "未命名"
         try:
+            # 测试发送要用最新的关注者列表（刚有人关注时缓存会显得"少发了"）
+            clear_followers_cache()
             recipient = build_sendable_recipient(raw, resolve_receive_email(self._config))
         except (ValueError, TypeError) as exc:
             return {"ok": False, "error": f"{name} 的配置不完整，无法发送：{exc}"}

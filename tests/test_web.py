@@ -2540,3 +2540,32 @@ async def test_timeline_marks_both_audiences(client, config_file):
     assert "chip--self" in body, "自己的标记没了"
     assert ">团体<" in body.replace("\n", "").replace(" ", "") or "团体" in body
     assert ">自己<" in body.replace("\n", "").replace(" ", "") or "自己" in body
+
+
+def test_build_sendable_recipient_keeps_audience():
+    """回归：构造可发送的 Recipient 时必须带上 audience。
+
+    `_recipient_from_raw` 用白名单过滤字段，而 `build_sendable_recipient`
+    又逐字段重建 Recipient —— 两处都漏掉 audience，结果它永远退回默认 self，
+    界面上选了「团体」的记录在**测试发送**时只发给使用者自己，
+    而 run 命令（checker 路径）却是正确的广播。同一份配置两种行为。
+    """
+    from src.web.domain import build_sendable_recipient
+
+    group = build_sendable_recipient(
+        {"name": "团A", "solar_birthday": "1990-01-01", "audience": "group"},
+        "me@example.com",
+    )
+    assert group.audience == "group"
+
+    private = build_sendable_recipient(
+        {"name": "私B", "solar_birthday": "1990-01-01", "audience": "self"},
+        "me@example.com",
+    )
+    assert private.audience == "self"
+
+    # 旧配置没有这个字段 → 默认只发给自己（安全的那侧）
+    legacy = build_sendable_recipient(
+        {"name": "旧C", "solar_birthday": "1990-01-01"}, "me@example.com"
+    )
+    assert legacy.audience == "self"
