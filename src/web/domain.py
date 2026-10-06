@@ -454,16 +454,30 @@ def build_timeline(
     default_reminder_days: int,
     today: Optional[datetime] = None,
 ) -> List[RecipientView]:
-    """构建全部收件人的时间轴，按"距离下一次生日"升序排列。"""
+    """构建全部收件人的时间轴，**最快过生日的排在最上面**。
+
+    排序键是三级，缺一不可：
+
+    1. ``days_until is None`` —— 日期认不出来的排最后（它们没有倒计时可比）
+    2. ``days_until`` —— 主键，升序。这是"最上面是最快过生日的"的来源
+    3. ``index`` —— 同一天生日时按配置里的先后，保证顺序**稳定**
+
+    第三级不是可有可无的：只按前两级排的话，同一天生日的几条谁在上取决于
+    Python 排序的稳定性与输入顺序，一旦上游顺序变化（比如批量改了受众后
+    重新读盘），页面顺序就会莫名其妙地跳。
+    """
     today_date = (today or datetime.now()).date()
     views = [
         build_recipient_view(i, raw, default_reminder_days, today_date)
         for i, raw in enumerate(recipients)
     ]
-    # 无法识别日期的排到最后，其余按天数升序。
     return sorted(
         views,
-        key=lambda v: (v.days_until is None, v.days_until if v.days_until is not None else 0),
+        key=lambda v: (
+            v.days_until is None,
+            v.days_until if v.days_until is not None else 0,
+            v.index,
+        ),
     )
 
 

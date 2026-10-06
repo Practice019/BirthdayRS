@@ -75,8 +75,13 @@ class RecipientForm(BaseModel):
     #: 留空 = **不单独设置**，用设置页里的全局默认值。这是常态，也是默认行为。
     #: 只有使用者显式填了数字，才按这个数字提醒这个人。
     reminder_days: str = ""
-    #: 提醒发给谁看：``self``（只发给我，默认）或 ``group``（发给团体所有人）。
-    audience: str = "self"
+    #: 提醒发给谁看：``self``（只发给我）或 ``group``（发给团体所有人）。
+    #:
+    #: **默认 ``None`` 表示"这次提交没带这个字段"**，而不是"等于 self"。
+    #: 两者必须区分：编辑一条团体记录时，没渲染该字段的调用方（旧客户端、
+    #: 脚本）不该把它**悄悄降级**成私人 —— 该广播的没广播，且不报错。
+    #: 新建时 None 会被 ``to_config`` 落成 ``self``（新记录的合理默认）。
+    audience: Optional[str] = None
     note: str = ""
 
     @field_validator("name")
@@ -113,8 +118,11 @@ class RecipientForm(BaseModel):
 
     @field_validator("audience")
     @classmethod
-    def check_audience(cls, v: str) -> str:
-        value = (v or "").strip() or "self"
+    def check_audience(cls, v: Optional[str]) -> Optional[str]:
+        # 空 / 未提供 → 保持 None，交由仓储层决定是"新建用默认"还是"编辑保留原值"
+        if v is None or not str(v).strip():
+            return None
+        value = str(v).strip()
         if value not in AUDIENCES:
             raise ValueError("请选择这条提醒发给谁")
         return value
@@ -153,8 +161,9 @@ class RecipientForm(BaseModel):
             "solar_birthday": self.solar_birthday,
             "lunar_birthday": self.computed_lunar_birthday,
             "reminder_days": self.reminder_days_value,
-            # 总是写出来：它决定提醒发给谁，不该靠"省略键"来隐含默认值 ——
-            # 省略会让配置读起来看不出这条是私人还是团体的。
+            # 本次提交带了就写出来（含显式的 self —— 那压过配置里的原值）；
+            # 没带就完全不出现在这个 dict 里，由仓储层保留原值。
+            # 新建时下面补一个 self 作为新记录的合理默认。
             "audience": self.audience,
             "note": self.note or None,
         }

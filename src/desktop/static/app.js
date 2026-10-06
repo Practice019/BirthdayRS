@@ -147,11 +147,13 @@
     });
 
     // 重新渲染后旧的勾选已经失效，重置操作条避免"选了 3 条"其实是过去的行
+    refreshFilterCounts();
     refreshBulkBar();
   }
 
   function buildRow(r) {
     var tr = el('tr', 'row row--' + r.status);
+    tr.setAttribute('data-audience', r.audience === 'group' ? 'group' : 'self');
 
     // 选择框（批量改受众用）
     var tdCheck = el('td', 'tbl__check');
@@ -257,7 +259,7 @@
     return btn;
   }
 
-  function loadTimeline() {
+  function loadTimeline(keepFilter) {
     if (!requireApi()) { return Promise.resolve(); }
     return call('get_timeline').then(function (data) {
       if (!data) { return; }
@@ -266,6 +268,9 @@
         return;
       }
       renderTimeline(data);
+      // 重新渲染后**总是**沿用当前筛选：删除、批量改受众这类操作之后，
+      // 使用者的视角不该突然跳回全部。首次加载时 currentFilter 就是 'all'。
+      applyFilter(keepFilter || currentFilter);
     });
   }
 
@@ -443,15 +448,19 @@
     solarTimer = setTimeout(function () { runSolarCheck(value); }, 220);
   }
 
-  /* ---------- 批量改受众 ---------- */
+  /* ---------- 批量改受众 + 筛选 ---------- */
+
+  function bulkRows() {
+    return Array.prototype.slice.call($$('#timeline-body tr.row'));
+  }
 
   function bulkBoxes() {
-    return Array.prototype.slice.call($$('#timeline-body .bulk-check'));
+    return bulkRows().map(function (tr) { return tr.querySelector('.bulk-check'); });
   }
 
   function refreshBulkBar() {
     var boxes = bulkBoxes();
-    var picked = boxes.filter(function (b) { return b.checked; });
+    var picked = boxes.filter(function (b) { return b && b.checked; });
     var bar = $('#bulkbar');
     var count = $('#bulk-count');
     if (!bar) { return; }
@@ -459,16 +468,58 @@
     // 没选时不显示：它贴底浮着，空着只会挡内容
     bar.classList.toggle('hidden', picked.length === 0);
 
+    bulkRows().forEach(function (tr) {
+      var box = tr.querySelector('.bulk-check');
+      tr.classList.toggle('row--picked', !!(box && box.checked));
+    });
+
     var all = $('#bulk-all');
     if (all) {
-      all.checked = picked.length === boxes.length && boxes.length > 0;
-      all.indeterminate = picked.length > 0 && picked.length < boxes.length;
+      // 只统计当前可见的行：筛选状态下"全选"不该选上隐藏的行
+      var visible = boxes.filter(function (b) { return b && !b.closest('tr').hidden; });
+      var pickedVisible = visible.filter(function (b) { return b.checked; });
+      all.checked = visible.length > 0 && pickedVisible.length === visible.length;
+      all.indeterminate = pickedVisible.length > 0 && pickedVisible.length < visible.length;
     }
+  }
+
+  function applyFilter(name) {
+    currentFilter = name;
+    var shown = 0;
+    bulkRows().forEach(function (tr) {
+      var match = name === 'all' || tr.getAttribute('data-audience') === name;
+      tr.classList.toggle('hidden', !match);
+      if (match) { shown += 1; }
+    });
+
+    // 筛选后取消不可见的勾选，否则会误改到看不见的记录
+    bulkBoxes().forEach(function (b) {
+      if (b && b.closest('tr').hidden) { b.checked = false; }
+    });
+
+    $$('.filterbtn').forEach(function (btn) {
+      btn.setAttribute('aria-pressed', String(btn.getAttribute('data-filter') === name));
+    });
+    refreshBulkBar();
+  }
+
+  var currentFilter = 'all';
+
+  function refreshFilterCounts() {
+    var n = { all: 0, group: 0, self: 0 };
+    bulkRows().forEach(function (tr) {
+      n.all += 1;
+      if (tr.getAttribute('data-audience') === 'group') { n.group += 1; } else { n.self += 1; }
+    });
+    Object.keys(n).forEach(function (k) {
+      var el = document.querySelector('[data-count="' + k + '"]');
+      if (el) { el.textContent = n[k] ? '(' + n[k] + ')' : ''; }
+    });
   }
 
   function applyAudience(audience) {
     if (!requireApi()) { return; }
-    var picked = bulkBoxes().filter(function (b) { return b.checked; });
+    var picked = bulkBoxes().filter(function (b) { return b && b.checked; });
     if (!picked.length) { return; }
 
     if (audience === 'group') {
@@ -486,25 +537,51 @@
           return;
         }
         setFlash('ok', res.notice || '已保存');
-        refreshTimeline();
+        // 重新拉列表后筛选要沿用，否则改完受众视角会突然跳回全部
+        loadTimeline(currentFilter);
       });
   }
 
   function initBulkBar() {
+    // 整行可点：复选框太小，点起来费劲
+    var tbody = $('#timeline-body');
+    if (tbody) {
+      tbody.addEventListener('click', function (event) {
+        // 行内按钮有自己的作用，点它们不能顺带选中整行
+        if (event.target.closest('a, button, input, label, select, textarea')) { return; }
+        var tr = event.target.closest('tr.row');
+        if (!tr || tr.classList.contains('hidden')) { return; }
+        var box = tr.querySelector('.bulk-check');
+        if (!box) { return; }
+        box.checked = !box.checked;
+        refreshBulkBar();
+      });
+    }
+
     var all = $('#bulk-all');
     if (all) {
       all.addEventListener('change', function () {
-        bulkBoxes().forEach(function (b) { b.checked = all.checked; });
+        bulkBoxes().forEach(function (b) {
+          if (b && !b.closest('tr').hidden) { b.checked = all.checked; }
+        });
         refreshBulkBar();
       });
     }
+
     var clear = $('#bulk-clear');
     if (clear) {
       clear.addEventListener('click', function () {
-        bulkBoxes().forEach(function (b) { b.checked = false; });
+        bulkBoxes().forEach(function (b) { if (b) { b.checked = false; } });
         refreshBulkBar();
       });
     }
+
+    $$('.filterbtn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        applyFilter(btn.getAttribute('data-filter'));
+      });
+    });
+
     var selfBtn = $('#bulk-self');
     if (selfBtn) { selfBtn.addEventListener('click', function () { applyAudience('self'); }); }
     var groupBtn = $('#bulk-group');

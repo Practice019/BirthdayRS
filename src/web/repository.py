@@ -49,6 +49,18 @@ FORM_FIELDS = (
 #: 不在表单里、但必须原样保留的字段，避免编辑时把配置里已有的值弄丢。
 PRESERVED_FIELDS = ("email", "template_file")
 
+#: 缺省时**保留原值**而不是重置的字段。
+#:
+#: ``audience`` 必须在这里。它有默认值 ``self``，所以"缺省"有两种含义：
+#: 调用方本来就没提供这个字段（旧客户端、脚本），或者提供了但恰好等于自己。
+#: 两者从数据上无法区分，而猜错的方向是不对称的：
+#: 把团体误判成私人 → 该广播的没广播，且**不会报错**，很难发现；
+#: 把私人误判成团体 → 一旦发送就把私人名单广播出去。
+#:
+#: 两个前端（web / 桌面）的 select 永远会提交这个字段，所以"缺省"只可能来自
+#: 没渲染它的调用方 —— 那就该保持原样。
+PRESERVE_WHEN_ABSENT = ("audience",)
+
 
 class ConfigNotFoundError(FileNotFoundError):
     """配置文件不存在。"""
@@ -408,11 +420,19 @@ class ConfigRepository:
         return cleaned
 
     def add_recipient(self, values: Dict[str, Any]) -> int:
-        """追加一个收件人，返回其索引。"""
+        """追加一个收件人，返回其索引。
+
+        新建时 ``audience`` 缺省会补成 ``self``：新记录总得有个受众，
+        而"只发给我自己"是那个安全的默认（广播出去收不回来）。
+        编辑路径相反 —— 缺省保留原值，见 ``PRESERVE_WHEN_ABSENT``。
+        """
         with self._lock:
             data = self._load()
             recipients = data.setdefault("recipients", [])
-            recipients.append(self._clean(values))
+            cleaned = self._clean(values)
+            if "audience" not in cleaned:
+                cleaned["audience"] = "self"
+            recipients.append(cleaned)
             self._save(data)
             return len(recipients) - 1
 
@@ -429,10 +449,16 @@ class ConfigRepository:
                 raise RecipientNotFoundError(index)
 
             existing = self._to_plain(recipients[index])
+            keep = set(PRESERVED_FIELDS) | set(PRESERVE_WHEN_ABSENT)
             merged: Dict[str, Any] = {
-                k: v for k, v in existing.items() if k in PRESERVED_FIELDS
+                k: v for k, v in existing.items() if k in keep
             }
-            merged.update(self._clean(values))
+            cleaned = self._clean(values)
+            # 缺省即保留：先把保留值放回去，再让本次提交的值覆盖它。
+            for field in PRESERVE_WHEN_ABSENT:
+                if field not in cleaned and field in existing:
+                    merged[field] = existing[field]
+            merged.update(cleaned)
             recipients[index] = merged
             self._save(data)
 

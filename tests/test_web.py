@@ -715,13 +715,32 @@ async def test_settings_preserves_comments(client, config_file):
     assert "保留这条注释用于验证" in saved
 
 
-async def test_settings_test_send_requires_key(client, config_file):
-    """没配密钥时点测试发送要给明确提示，而不是报错。"""
-    resp = await client.post("/settings/test", follow_redirects=False)
+async def test_settings_test_send_requires_key(client, config_file, tmp_path):
+    """一个渠道都没配对时点测试发送要给明确提示，而不是报错。
+
+    **必须用一份独立的、没配任何凭据的配置**：这个测试走的是真实的
+    ``/settings/test`` 路由，如果沿用外层 client 那份配好 key 的配置，
+    它就会真的把邮件发到 ``example.com``，于是测试结果取决于网络和
+    Resend 的策略 —— 表现成"偶尔失败一次"，排查起来很费劲。
+    """
+    path = tmp_path / "no-credentials.yml"
+    path.write_text(
+        "notification:\n"
+        "  start_notification: resend\n"
+        "recipients:\n"
+        "  - name: 张三\n"
+        "    solar_birthday: 1990-01-01\n",
+        encoding="utf-8",
+    )
+    app = create_app(str(path))
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        resp = await ac.post("/settings/test", follow_redirects=False)
+
     assert resp.status_code == 303
     location = unquote(resp.headers["location"])
     assert "error=" in location
-    assert "API Key" in location
+    assert "渠道" in location
 
 
 async def test_settings_nav_link_present(client):
@@ -2208,8 +2227,9 @@ def test_settings_page_shows_ready_when_configured(tmp_path):
 
     resp = asyncio.run(run())
     assert resp.status_code == 200
+    # 文案统一用「团体」「自己」
     assert "可广播给团体所有人" in resp.text
-    assert "可把私人提醒只发给你自己" in resp.text
+    assert "可把「自己」的提醒单独发给你" in resp.text
     assert "缺 appToken" not in resp.text
 
 
@@ -2394,3 +2414,122 @@ def test_bulk_route_precedes_dynamic_route():
     assert paths.index("/recipients/audience") < paths.index("/recipients/{index}"), (
         "批量路由必须排在动态路由之前，否则会被 {index} 吃掉"
     )
+
+
+async def test_edit_without_audience_keeps_existing(client, config_file):
+    """回归：编辑时表单没带 audience，必须**保留原值**，不能重置成"自己"。
+
+    这是"团体设置每次都被重置"的根因。曾经 update_recipient 的合并逻辑只保留
+    PRESERVED_FIELDS（email / template_file），audience 不在其中，于是任何
+    没提交它的编辑都会把团体记录**悄悄降级**成私人 —— 该广播的没广播，
+    而且不报错，很难发现。
+    """
+    # 先把一条改成团体
+    await client.post(
+        "/recipients/audience",
+        data={"indices": ["0"], "audience": "group"},
+        follow_redirects=False,
+    )
+
+    # 再编辑这条但不提交 audience（模拟没渲染该字段的调用方）
+    resp = await client.post(
+        "/recipients/0",
+        data={"name": "张三", "solar_birthday": "1990-01-01", "reminder_days": "3"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+    import yaml
+
+    recipients = yaml.safe_load(config_file.read_text(encoding="utf-8"))["recipients"]
+    assert recipients[0]["audience"] == "group", "缺省提交不该把团体降级成私人"
+
+
+async def test_edit_with_explicit_audience_still_changes(client, config_file):
+    """显式提交 audience 时仍要能改 —— 保留语义不能变成"改不动"。"""
+    await client.post(
+        "/recipients/audience",
+        data={"indices": ["0"], "audience": "group"},
+        follow_redirects=False,
+    )
+    resp = await client.post(
+        "/recipients/0",
+        data={
+            "name": "张三",
+            "solar_birthday": "1990-01-01",
+            "reminder_days": "3",
+            "audience": "self",
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+    import yaml
+
+    recipients = yaml.safe_load(config_file.read_text(encoding="utf-8"))["recipients"]
+    assert recipients[0]["audience"] == "self"
+
+
+# ---------- 时间轴排序 ----------
+
+
+def test_timeline_sorted_by_days_until():
+    """最快过生日的排最上面 —— 这是时间轴的核心约定。"""
+    from datetime import datetime
+
+    from src.web.domain import build_timeline
+
+    today = datetime(2026, 10, 6)
+    raw = [
+        # 故意乱序放入，且倒计时互不相同
+        {"name": "远", "solar_birthday": "1990-12-01"},
+        {"name": "近", "solar_birthday": "1990-10-08"},
+        {"name": "中", "solar_birthday": "1990-11-01"},
+    ]
+    views = build_timeline(raw, 3, today=today)
+    names = [v.name for v in views]
+    assert names == ["近", "中", "远"], f"排序不对：{names}"
+
+    days = [v.days_until for v in views]
+    assert days == sorted(days), f"天数不是升序：{days}"
+
+
+def test_timeline_same_day_order_is_stable():
+    """同一天生日时按配置里的先后排，顺序必须稳定。
+
+    只按 days_until 排的话，同一天的几条谁在上取决于排序实现与输入顺序 ——
+    上游顺序一变（比如批量改完受众重新读盘），页面顺序就会莫名跳动。
+    """
+    from datetime import datetime
+
+    from src.web.domain import build_timeline
+
+    today = datetime(2026, 10, 6)
+    raw = [
+        {"name": "甲", "solar_birthday": "1990-10-10"},
+        {"name": "乙", "solar_birthday": "1991-10-10"},
+        {"name": "丙", "solar_birthday": "1992-10-10"},
+    ]
+    first = [v.name for v in build_timeline(raw, 3, today=today)]
+    assert first == ["甲", "乙", "丙"]
+
+    # 反复构建结果一致（不受内部实现影响）
+    for _ in range(3):
+        assert [v.name for v in build_timeline(raw, 3, today=today)] == first
+
+
+def test_unparseable_dates_go_last():
+    """日期认不出来的排最后，不能插在正常记录中间。"""
+    from datetime import datetime
+
+    from src.web.domain import build_timeline
+
+    today = datetime(2026, 10, 6)
+    raw = [
+        {"name": "坏", "solar_birthday": "1990-01-32"},
+        {"name": "好", "solar_birthday": "1990-10-20"},
+    ]
+    views = build_timeline(raw, 3, today=today)
+    assert views[0].name == "好"
+    assert views[1].name == "坏"
+    assert views[1].days_until is None

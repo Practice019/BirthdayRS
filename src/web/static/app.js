@@ -182,8 +182,8 @@ document.querySelectorAll('form.js-test-send').forEach(function (form) {
   }
 })();
 
-/* 时间轴的批量选择：勾选任意一条后浮现操作条，用于批量改受众。
-   禁用 JS 时勾选框仍然可用（能选中、能提交），只是少了计数与"全选"的联动 ——
+/* 时间轴的批量选择与筛选。
+   禁用 JS 时勾选框仍然可用（能选中、能提交），筛选则退化为"显示全部" ——
    所以这里只做增强，不做拦截。 */
 (function () {
   var form = document.getElementById('bulk-form');
@@ -192,36 +192,129 @@ document.querySelectorAll('form.js-test-send').forEach(function (form) {
     return;
   }
 
-  var boxes = Array.prototype.slice.call(form.querySelectorAll('.bulk-check'));
+  var tbody = form.querySelector('tbody');
   var countEl = document.getElementById('bulk-count');
   var allBox = document.getElementById('bulk-all');
   var clearBtn = document.getElementById('bulk-clear');
+  var emptyNote = document.getElementById('filter-empty');
+
+  function rows() {
+    return Array.prototype.slice.call(form.querySelectorAll('tr.row'));
+  }
+
+  function boxes() {
+    return rows().map(function (tr) { return tr.querySelector('.bulk-check'); });
+  }
+
+  /* 整行可点：复选框只有十几像素，点起来费劲。
+     点行内任何空白处都切换选中状态。 */
+  tbody.addEventListener('click', function (event) {
+    // 行内的按钮/链接/输入框有自己的作用，点它们不能顺带选中整行 ——
+    // 否则点「删除」会先把这一行勾上，很吓人。
+    //
+    // 这里**不能**把 form 列进排除项：整张表本身就在 <form id="bulk-form"> 里，
+    // closest('form') 对任何点击都会命中，于是每次点击都在这里 return，
+    // 整行点选完全失效。行内真正的嵌套表单（删除/测试发送）会命中 a/button，
+    // 已经能被上面挡住。
+    if (event.target.closest('a, button, input, label, select, textarea')) {
+      return;
+    }
+    var tr = event.target.closest('tr.row');
+    if (!tr || tr.hidden) {
+      return;
+    }
+    var box = tr.querySelector('.bulk-check');
+    if (!box) {
+      return;
+    }
+    box.checked = !box.checked;
+    refresh();
+  });
 
   function refresh() {
-    var picked = boxes.filter(function (b) { return b.checked; });
+    var all = boxes();
+    var picked = all.filter(function (b) { return b.checked; });
     countEl.textContent = String(picked.length);
     // 一条都没选时收起操作条：它浮在页面底部，空着只会挡内容
     bar.hidden = picked.length === 0;
 
+    rows().forEach(function (tr) {
+      var box = tr.querySelector('.bulk-check');
+      // 用 class 而不是 :has()，兼容性更稳；也便于样式统一控制
+      tr.classList.toggle('row--picked', !!(box && box.checked));
+    });
+
     if (allBox) {
-      allBox.checked = picked.length === boxes.length && boxes.length > 0;
+      var visible = all.filter(function (b) { return !b.closest('tr').hidden; });
+      var pickedVisible = visible.filter(function (b) { return b.checked; });
+      allBox.checked = visible.length > 0 && pickedVisible.length === visible.length;
       // indeterminate 表示"选了一部分"，这是勾选框的标准表意
-      allBox.indeterminate = picked.length > 0 && picked.length < boxes.length;
+      allBox.indeterminate = pickedVisible.length > 0 && pickedVisible.length < visible.length;
     }
   }
 
-  boxes.forEach(function (b) { b.addEventListener('change', refresh); });
+  /* ---------- 按受众筛选 ---------- */
+
+  var currentFilter = 'all';
+
+  function applyFilter(name) {
+    currentFilter = name;
+    var shown = 0;
+    rows().forEach(function (tr) {
+      var match = name === 'all' || tr.getAttribute('data-audience') === name;
+      tr.hidden = !match;
+      if (match) { shown += 1; }
+    });
+    if (emptyNote) { emptyNote.hidden = shown !== 0 || rows().length === 0; }
+
+    // 筛选后**取消不可见的勾选**：否则会误改到看不见的记录。
+    // 这是筛选与多选同时存在时最容易出事的地方。
+    boxes().forEach(function (b) {
+      if (b.closest('tr').hidden) { b.checked = false; }
+    });
+
+    document.querySelectorAll('.filterbtn').forEach(function (btn) {
+      btn.setAttribute('aria-pressed', String(btn.getAttribute('data-filter') === name));
+    });
+    refresh();
+  }
+
+  function refreshCounts() {
+    var all = rows();
+    var n = { all: all.length, group: 0, self: 0 };
+    all.forEach(function (tr) {
+      var a = tr.getAttribute('data-audience');
+      if (a === 'group') { n.group += 1; } else { n.self += 1; }
+    });
+    Object.keys(n).forEach(function (k) {
+      var el = document.querySelector('[data-count="' + k + '"]');
+      if (el) { el.textContent = n[k] ? '(' + n[k] + ')' : ''; }
+    });
+  }
+
+  document.querySelectorAll('.filterbtn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      applyFilter(btn.getAttribute('data-filter'));
+    });
+  });
+
+  /* ---------- 勾选框与全选 ---------- */
+
+  boxes().forEach(function (b) { b.addEventListener('change', refresh); });
 
   if (allBox) {
     allBox.addEventListener('change', function () {
-      boxes.forEach(function (b) { b.checked = allBox.checked; });
+      // 只全选**当前可见**的行：筛选状态下"全选"若选上隐藏的行，会误改数据
+      boxes().forEach(function (b) {
+        if (!b.closest('tr').hidden) { b.checked = allBox.checked; }
+      });
       refresh();
     });
   }
 
   if (clearBtn) {
     clearBtn.addEventListener('click', function () {
-      boxes.forEach(function (b) { b.checked = false; });
+      boxes().forEach(function (b) { b.checked = false; });
       refresh();
     });
   }
@@ -235,5 +328,6 @@ document.querySelectorAll('form.js-test-send').forEach(function (form) {
     });
   });
 
+  refreshCounts();
   refresh();
 })();

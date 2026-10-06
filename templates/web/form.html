@@ -89,19 +89,19 @@
     </div>
 
     <div class="field{% if errors.audience %} field--bad{% endif %}">
-      <label for="audience">这条提醒发给谁</label>
+      <label for="audience">提醒发给谁</label>
       <select id="audience" name="audience"
               {% if errors.audience %}aria-describedby="audience-err" aria-invalid="true"{% endif %}>
         <option value="self" {% if (values.audience or 'self') == 'self' %}selected{% endif %}>
-          只发给我自己
+          自己
         </option>
         <option value="group" {% if values.audience == 'group' %}selected{% endif %}>
-          发给团体所有人
+          团体
         </option>
       </select>
       <p class="field__hint">
-        互相认识的团体选"发给团体所有人"，会广播给推送应用里所有关注者；
-        私人朋友选"只发给我自己"，不会被别人看到。
+        选「团体」会广播给推送应用里所有关注者（大家互相认识）；
+        选「自己」只有你收到，别人看不到。
       </p>
       {% if errors.audience %}
         <p class="field__err" id="audience-err">{{ errors.audience }}</p>

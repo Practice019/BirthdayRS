@@ -39,6 +39,21 @@
       <a class="btn btn--primary" href="/recipients/new">添加收件人</a>
     </section>
   {% else %}
+    {# 按受众筛选。纯前端的视图控制（不重新请求），所以切换是即时的，
+       且不会因为"筛选后重新渲染"把已选项弄丢。 #}
+    <div class="filterbar" role="group" aria-label="按受众筛选">
+      <span class="filterbar__label">只看</span>
+      <button type="button" class="filterbtn" data-filter="all" aria-pressed="true">
+        全部 <span class="filterbtn__n" data-count="all"></span>
+      </button>
+      <button type="button" class="filterbtn" data-filter="group" aria-pressed="false">
+        团体 <span class="filterbtn__n" data-count="group"></span>
+      </button>
+      <button type="button" class="filterbtn" data-filter="self" aria-pressed="false">
+        自己 <span class="filterbtn__n" data-count="self"></span>
+      </button>
+    </div>
+
     {# 批量改受众。用 form 包住整张表，勾选与操作条都在这一个表单里 ——
        分成两个表单的话，勾选框的值传不到提交按钮那边。 #}
     <form method="post" action="/recipients/audience" id="bulk-form">
@@ -46,12 +61,12 @@
       <span class="bulkbar__count"><strong id="bulk-count">0</strong> 条已选</span>
       <span class="bulkbar__label">设为</span>
       <button type="submit" class="btn btn--sm" name="audience" value="self">
-        只发给我自己
+        自己
       </button>
       <button type="submit" class="btn btn--sm btn--danger"
               name="audience" value="group"
               data-confirm="设为「团体」后，这些人过生日时会广播给推送应用里的所有人，消息发出去收不回来。确定吗？">
-        发给团体所有人
+        团体
       </button>
       <button type="button" class="btn btn--sm" id="bulk-clear">取消选择</button>
     </div>
@@ -74,7 +89,7 @@
       </thead>
       <tbody>
         {% for r in timeline %}
-          <tr class="row row--{{ r.status }}">
+          <tr class="row row--{{ r.status }}" data-audience="{{ 'group' if r.audience == 'group' else 'self' }}">
             <td data-label="选择" class="tbl__check">
               <input type="checkbox" name="indices" value="{{ r.index }}"
                      class="bulk-check" aria-label="选择 {{ r.name }}">
@@ -83,7 +98,7 @@
               <span class="name">{{ r.name }}</span>
               {% if r.audience == 'group' %}
                 {# 广播给团体是不可撤销的，必须一眼看得出这条会发出去 #}
-                <span class="chip chip--sm chip--group" title="这条会广播给团体所有人">团体</span>
+                <span class="chip chip--sm chip--group" title="会广播给团体所有人">团体</span>
               {% endif %}
               {% if r.note %}<span class="sub">{{ r.note }}</span>{% endif %}
             </td>
@@ -147,6 +162,10 @@
         {% endfor %}
       </tbody>
     </table>
+
+    <p class="filterbar__empty" id="filter-empty" hidden>
+      这个筛选下没有记录。
+    </p>
     </form>
   {% endif %}
 {% endblock %}

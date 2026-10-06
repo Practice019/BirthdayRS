@@ -397,3 +397,19 @@ code, .mono { font-family: var(--font-mono); font-size: 0.92em; }
 }
 .bulkbar__count { font-size: 13px; }
 .bulkbar__label { font-size: 13px; color: var(--muted); margin-left: 8px; }
+
+/* 时间轴：整行可点选 + 筛选，同 web 版 */
+.tbl tbody tr.row { cursor: pointer; }
+.tbl tbody tr.row:hover { background: var(--canvas); }
+.tbl tbody tr.row--picked { background: #fdf2f6; box-shadow: inset 3px 0 0 var(--brand); }
+.tbl tbody tr.row--picked:hover { background: #fbe6ee; }
+.filterbar { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; flex-wrap: wrap; }
+.filterbar__label { font-size: 13px; color: var(--muted); }
+.filterbtn {
+  padding: 3px 10px; min-height: 28px; border: 1px solid var(--line);
+  border-radius: var(--radius); background: var(--paper); color: var(--muted);
+  font-family: inherit; font-size: 13px; cursor: pointer;
+}
+.filterbtn:hover { color: var(--ink); border-color: var(--line-strong); }
+.filterbtn[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: #fff; font-weight: 600; }
+.filterbtn__n { opacity: .75; font-size: 12px; }

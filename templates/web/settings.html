@@ -53,13 +53,13 @@
         {% if values.wxpusher_can_broadcast %}
           <span class="capability__ok">✓ 可广播给团体所有人</span>
         {% else %}
-          <span class="capability__gap">✗ 团体提醒发不出去（缺 appToken）</span>
+          <span class="capability__gap">✗ 「团体」的提醒发不出去（缺 appToken）</span>
         {% endif %}
         <br>
         {% if values.wxpusher_can_self %}
-          <span class="capability__ok">✓ 可把私人提醒只发给你自己</span>
+          <span class="capability__ok">✓ 可把「自己」的提醒单独发给你</span>
         {% else %}
-          <span class="capability__gap">✗ 私人提醒发不出去（缺 self_uid 或 SPT）</span>
+          <span class="capability__gap">✗ 「自己」的提醒发不出去（缺 self_uid 或 SPT）</span>
         {% endif %}
       </p>
 
@@ -84,7 +84,7 @@
 
         <p class="field__hint">
           在 <a href="https://wxpusher.zjiecode.com/admin" target="_blank" rel="noopener noreferrer">开发者后台</a>
-          创建应用后，从 appToken 页面复制。有它才能把「发给团体所有人」的提醒广播出去。
+          创建应用后，从 appToken 页面复制。有它才能把「团体」的提醒广播出去。
         </p>
         {% if errors.app_token %}<p class="field__err" id="apptoken-err">{{ errors.app_token }}</p>{% endif %}
 
@@ -104,7 +104,7 @@
                {% if errors.self_uid %}aria-describedby="uid-err" aria-invalid="true"{% endif %}>
         <p class="field__hint">
           关注你自己的应用后，在应用后台的用户列表里能看到自己的 UID。
-          有它才能把「只发给我自己」的私人提醒定向发出来（否则会广播给所有人）。
+          有它才能把「自己」的提醒定向发出来（否则会广播给所有人）。
         </p>
         {% if errors.self_uid %}<p class="field__err" id="uid-err">{{ errors.self_uid }}</p>{% endif %}
       </div>

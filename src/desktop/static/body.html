@@ -26,11 +26,24 @@
 
         <section id="meta" class="meta" aria-label="通知配置"></section>
 
+        <div class="filterbar" id="filterbar" role="group" aria-label="按受众筛选">
+          <span class="filterbar__label">只看</span>
+          <button type="button" class="filterbtn" data-filter="all" aria-pressed="true">
+            全部 <span class="filterbtn__n" data-count="all"></span>
+          </button>
+          <button type="button" class="filterbtn" data-filter="group" aria-pressed="false">
+            团体 <span class="filterbtn__n" data-count="group"></span>
+          </button>
+          <button type="button" class="filterbtn" data-filter="self" aria-pressed="false">
+            自己 <span class="filterbtn__n" data-count="self"></span>
+          </button>
+        </div>
+
         <div class="bulkbar hidden" id="bulkbar">
           <span class="bulkbar__count"><strong id="bulk-count">0</strong> 条已选</span>
           <span class="bulkbar__label">设为</span>
-          <button type="button" class="btn btn--sm" id="bulk-self">只发给我自己</button>
-          <button type="button" class="btn btn--sm btn--danger" id="bulk-group">发给团体所有人</button>
+          <button type="button" class="btn btn--sm" id="bulk-self">自己</button>
+          <button type="button" class="btn btn--sm btn--danger" id="bulk-group">团体</button>
           <button type="button" class="btn btn--sm" id="bulk-clear">取消选择</button>
         </div>
 
@@ -101,14 +114,14 @@
           </div>
 
           <div class="field">
-            <label for="f-audience">这条提醒发给谁</label>
+            <label for="f-audience">提醒发给谁</label>
             <select id="f-audience" style="max-width:240px">
-              <option value="self">只发给我自己</option>
-              <option value="group">发给团体所有人</option>
+              <option value="self">自己</option>
+              <option value="group">团体</option>
             </select>
             <p class="field__hint">
-              互相认识的团体选"发给团体所有人"，会广播给推送应用里所有关注者；
-              私人朋友选"只发给我自己"。
+              选「团体」会广播给推送应用里所有关注者（大家互相认识）；
+              选「自己」只有你收到。
             </p>
           </div>
 
@@ -191,7 +204,7 @@
               </div>
               <p class="field__hint">
                 在 wxpusher.zjiecode.com/admin 创建应用后，从 appToken 页面复制。
-                有它才能把「发给团体所有人」的提醒广播出去。
+                有它才能把「团体」的提醒广播出去。
               </p>
               <p id="s-app-token-err" class="field__err hidden"></p>
               <label id="s-clear-app-token-wrap" class="check hidden">
@@ -205,7 +218,7 @@
               <input id="s-self-uid" type="text" class="mono" autocomplete="off" spellcheck="false"
                      placeholder="UID_开头，在应用后台的用户列表里">
               <p class="field__hint">
-                有它才能把「只发给我自己」的私人提醒定向发出来（否则会广播给所有人）。
+                有它才能把「自己」的提醒定向发出来（否则会广播给所有人）。
               </p>
               <p id="s-self-uid-err" class="field__err hidden"></p>
             </div>

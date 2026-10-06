@@ -51,3 +51,6 @@ birthday_reminder.log
 docs/_build/
 docs/locale/*.pot
 docs/locale/*/LC_MESSAGES/*.mo
+
+# 部署脚本的本地覆盖（含令牌，不入库）
+deploy.local.sh

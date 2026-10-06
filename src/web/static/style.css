@@ -696,3 +696,52 @@ code, .mono { font-family: var(--font-mono); font-size: 0.92em; }
 .bulkbar__count { font-size: 13px; }
 .bulkbar__label { font-size: 13px; color: var(--muted); margin-left: var(--sp-2); }
 .bulkbar .btn--danger { margin-left: 0; }
+
+/* ---------- 时间轴：整行可点选 + 筛选 ---------- */
+
+/* 整行可点：复选框只有十几像素，点起来费劲。
+   cursor + hover 反馈是必要的 —— 不然没人知道整行能点。 */
+.tbl tbody tr.row { cursor: pointer; }
+.tbl tbody tr.row:hover { background: var(--canvas); }
+
+/* 已选中：左侧留一道竖条，比整行变色更容易在长列表里扫到 */
+.tbl tbody tr.row--picked { background: #fdf2f6; box-shadow: inset 3px 0 0 var(--brand); }
+.tbl tbody tr.row--picked:hover { background: #fbe6ee; }
+
+.filterbar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: 0 0 var(--sp-3);
+  flex-wrap: wrap;
+}
+.filterbar__label { font-size: 13px; color: var(--muted); }
+.filterbtn {
+  padding: 3px 10px;
+  min-height: 28px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--paper);
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.filterbtn:hover { color: var(--ink); border-color: var(--line-strong); }
+.filterbtn[aria-pressed="true"] {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #fff;
+  font-weight: 600;
+}
+.filterbtn__n { opacity: 0.75; font-size: 12px; }
+.filterbar__empty {
+  margin: var(--sp-4) 0;
+  padding: var(--sp-6);
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+  background: var(--paper);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+}
