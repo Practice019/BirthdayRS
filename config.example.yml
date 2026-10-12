@@ -61,18 +61,22 @@ notification:
   # 设置页可以勾选 resend 与 wxpusher；email 与 serverchan 在这里手工维护。
   start_notification: resend
 
+# 生日字段支持三种填法（公历、农历至少填一个）：
+#   1. 完整公历   solar_birthday: 1990-10-16   → 自动算农历、显示年龄
+#   2. 只有月日   solar_birthday: "1016"       → 只按公历提醒，不显示年龄
+#   3. 只填农历   lunar_birthday: "1224"       → 只按农历提醒（腊月廿四）
+# 注意：只有月日时**不会**自动算农历 —— 农历与公历的对应逐年漂移，
+# 同一个 0606 在不同年份对应不同农历。要农历提醒就自己填农历。
 recipients:
-  # 收件人只需四项：姓名、身份证出生年月日、提前天数、备注
-  # 农历生日由身份证日期自动换算，不要手填。
+  # 收件人只需四项：姓名、公历生日、提前天数、备注
   # 提醒发给上面 default_receive_email 指定的邮箱，不是发给这里的本人。
   - name: 张三
     solar_birthday: 1990-01-20  # 身份证上的出生日期
-    lunar_birthday: 1989-12-24  # 由上一行自动换算，人工无需维护
+    lunar_birthday: 1989-12-24  # 通常留空，由上一行自动换算；只过农历生日时才手填
     reminder_days: 3            # 提前几天提醒，0 = 当天
     audience: self              # self = 只发给我自己（默认）；group = 发给团体所有人
     note: 大学同学               # 只给自己看的备注
 
   - name: 李四
-    solar_birthday: 1991-03-30
-    lunar_birthday: 1991-02-15
+    solar_birthday: "0330"      # 只有月日（不知道出生年）：不显示年龄、不自动算农历
     reminder_days: 7

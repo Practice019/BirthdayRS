@@ -103,7 +103,8 @@ def test_push_mentions_days_and_greeting():
 
 def test_same_day_wording():
     """当天时要说"今天"，不能还说"0 天后"。"""
-    text = _push_text("张三", dict(_BASE_EXTRA, days_until=0))
+    extra = dict(_BASE_EXTRA, days_until=0, year=2026, month=10, day=6)
+    text = _push_text("张三", extra)
     assert "今天（2026年10月6日）是您的" in text
     assert "0 天后" not in text
 

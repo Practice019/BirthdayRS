@@ -16,49 +16,65 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from src.core.config import AUDIENCES
-from src.web.lunar import normalize_solar_input, parse_iso_date, solar_to_lunar
+from src.web.lunar import (
+    normalize_solar_input,
+    parse_iso_date,
+    parse_month_day,
+    solar_to_lunar,
+)
 
 #: 存储格式（也是 config.yml 里的格式）。
 DATE_FORMAT = "%Y-%m-%d"
 #: 提示要按**使用者实际输入的写法**说，否则他会照着提示去填连字符。
 DATE_HINT = "请填 8 位数字，例如 19900120"
 
-#: 这个字段在界面上的名字。
+#: 这两个字段在界面上的名字。
 #: 标签与所有校验提示必须用同一个说法，否则使用者对不上号。
-SOLAR_FIELD_LABEL = "身份证出生年月日"
+SOLAR_FIELD_LABEL = "公历生日"
+LUNAR_FIELD_LABEL = "农历生日"
 
 MAX_REMINDER_DAYS = 365
 MAX_NOTE_LENGTH = 500
 
 
-def _clean_solar_date(value: Optional[str]) -> str:
-    """校验必填的身份证出生年月日，返回**存储格式** ``YYYY-MM-DD``。
+def _clean_birth_field(value: Optional[str], label: str, allow_month_day: bool) -> str:
+    """校验一个生日字段，返回**存储格式**。
 
-    输入允许两种写法：8 位数字（界面上要求的 ``19900120``）与带连字符的
-    ``1990-01-20``（已有配置、API 调用方）。统一由 ``normalize_solar_input``
-    归一化后再校验 —— 校验和存储都只认一种格式，多格式共存只在入口这一层。
+    支持的写法（``allow_month_day`` 决定要不要接受后两种）：
 
-    这里用 ``parse_iso_date`` 而不是 ``strptime``：前者会拒绝 1990-02-30
-    这类不存在的日期，是项目里唯一的权威日期校验入口。
+    - 8 位数字 ``19900120``  → 存 ``1990-01-20``（完整日期，能算年龄）
+    - 带连字符 ``1990-01-20`` → 同上（已有配置与 API 调用方在用）
+    - 4 位数字 ``0606``      → 存 ``0606``（只有月日，不填年）
+    - ``06-06`` / ``6-6``    → 同上
+
+    完整日期用 ``parse_iso_date`` 校验（它会拒绝 1990-02-30 这类不存在的日期，
+    是项目里唯一的权威入口）；只有月日时用 ``parse_month_day``，它借闰年
+    校验真实性、拒绝 0230 与 1301。
     """
     raw = (value or "").strip()
     if not raw:
-        raise ValueError(f"请填写{SOLAR_FIELD_LABEL}")
+        return ""
 
+    # 先试完整日期
     stored = normalize_solar_input(raw)
     parsed = parse_iso_date(stored)
-    if parsed is None:
-        raise ValueError(f"{SOLAR_FIELD_LABEL}不正确，{DATE_HINT}")
+    if parsed is not None:
+        if parsed.year < 1900:
+            raise ValueError(f"{label}的年份看起来不对，请填四位年份")
+        if parsed.year > datetime.now().year:
+            raise ValueError(f"{label}不能是未来的日期")
+        return stored
 
-    if parsed.year < 1900:
-        raise ValueError(f"{SOLAR_FIELD_LABEL}的年份看起来不对，请填四位年份")
-    if parsed.year > datetime.now().year:
-        raise ValueError(f"{SOLAR_FIELD_LABEL}不能是未来的日期")
-    # 返回**归一化后**的值：存储格式永远是 YYYY-MM-DD，与使用者输入什么写法无关。
-    return stored
+    # 再试只有月日
+    if allow_month_day:
+        month_day = parse_month_day(raw)
+        if month_day is not None:
+            return f"{month_day[0]:02d}{month_day[1]:02d}"
+
+    raise ValueError(f"{label}不正确，{DATE_HINT}")
 
 
 class RecipientForm(BaseModel):
@@ -71,7 +87,13 @@ class RecipientForm(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     name: str = Field(max_length=64)
+    #: 公历生日。可填完整日期（1990-01-20 / 19900120），也可只填月日（0606）。
+    #: **与 lunar_birthday 至少填一个。**
     solar_birthday: str = ""
+    #: 农历生日。只在"只过农历生日"或"农历与公历不是同一天"时才需要手填 ——
+    #: 填了完整公历时会自动推导并存进去，这里留空即可。
+    #: 同样支持只填月日（1224 = 腊月廿四）。
+    lunar_birthday: str = ""
     #: 留空 = **不单独设置**，用设置页里的全局默认值。这是常态，也是默认行为。
     #: 只有使用者显式填了数字，才按这个数字提醒这个人。
     reminder_days: str = ""
@@ -97,7 +119,12 @@ class RecipientForm(BaseModel):
     @field_validator("solar_birthday")
     @classmethod
     def check_solar(cls, v: str) -> str:
-        return _clean_solar_date(v)
+        return _clean_birth_field(v, SOLAR_FIELD_LABEL, allow_month_day=True)
+
+    @field_validator("lunar_birthday")
+    @classmethod
+    def check_lunar(cls, v: str) -> str:
+        return _clean_birth_field(v, LUNAR_FIELD_LABEL, allow_month_day=True)
 
     @field_validator("reminder_days")
     @classmethod
@@ -127,6 +154,17 @@ class RecipientForm(BaseModel):
             raise ValueError("请选择这条提醒发给谁")
         return value
 
+    @model_validator(mode="after")
+    def check_at_least_one_birthday(self) -> "RecipientForm":
+        """公历、农历至少填一个 —— 两个都空的话这条记录没有任何意义。
+
+        放在模型级而不是字段级：单独看哪个字段都可能合法（都允许留空），
+        只有合起来才知道够不够。
+        """
+        if not (self.solar_birthday or "").strip() and not (self.lunar_birthday or "").strip():
+            raise ValueError("公历生日和农历生日至少填一个")
+        return self
+
     @field_validator("note")
     @classmethod
     def check_note(cls, v: str) -> str:
@@ -141,8 +179,15 @@ class RecipientForm(BaseModel):
         return int(self.reminder_days) if self.reminder_days else None
 
     @property
-    def computed_lunar_birthday(self) -> Optional[str]:
-        """由身份证出生年月日推导出的农历生日（存储格式）。"""
+    def computed_lunar_from_solar(self) -> Optional[str]:
+        """填了完整公历时自动推导的农历；无年或没填公历时返回 None。
+
+        无年（如 0606）**不推导** —— 农历与公历的对应逐年漂移，
+        同一个 0606 在不同年份对应不同农历，推导等于编造。
+        """
+        parsed = parse_iso_date(normalize_solar_input(self.solar_birthday))
+        if parsed is None:
+            return None
         return solar_to_lunar(self.solar_birthday)
 
     def to_config(self) -> dict:
@@ -151,15 +196,23 @@ class RecipientForm(BaseModel):
         只返回表单管理的字段；``email`` / ``template_file`` 由仓储层保留原值，
         不出现在这里，以免被清空。
 
-        - ``lunar_birthday`` 写自动推导值：CLI 的 run 命令靠它才能在农历生日当天提醒。
-        - ``reminder_days`` 留空时**整个键都不写**：配置里没有这个键，运行时就会退回
-          全局默认值（见 ``Config.from_yaml``）。显式填 0 则写 0 —— 0 是合法语义
-          （"只在当天提醒"），与"不设置"必须区分开。
+        ``lunar_birthday`` 的取值优先级：
+
+        1. 使用者手填了农历 → **以他填的为准**（他可能只过农历，或农历与公历
+           不是同一天，程序不该用推导值覆盖他的输入）
+        2. 没填农历、但填了**完整公历** → 写自动推导值（CLI 的 run 命令靠它
+           才能在农历生日当天提醒）
+        3. 都没填 → 不写这个键（无年公历推不出农历，不该编造）
+
+        ``reminder_days`` 留空时**整个键都不写**：配置里没有这个键，运行时就会退回
+        全局默认值（见 ``Config.from_yaml``）。显式填 0 则写 0 —— 0 是合法语义
+        （"只在当天提醒"），与"不设置"必须区分开。
         """
+        lunar = self.lunar_birthday or self.computed_lunar_from_solar
         data = {
             "name": self.name,
-            "solar_birthday": self.solar_birthday,
-            "lunar_birthday": self.computed_lunar_birthday,
+            "solar_birthday": self.solar_birthday or None,
+            "lunar_birthday": lunar,
             "reminder_days": self.reminder_days_value,
             # 本次提交带了就写出来（含显式的 self —— 那压过配置里的原值）；
             # 没带就完全不出现在这个 dict 里，由仓储层保留原值。

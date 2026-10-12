@@ -241,15 +241,18 @@ async def test_default_reminder_days_follows_active_channel(config_file, tmp_pat
     assert config.recipients[0].reminder_days == 1
 
 
-async def test_create_requires_solar_birthday(client, config_file):
-    """身份证出生年月日是必填项，农历不再接受手工输入。"""
+async def test_create_requires_at_least_one_birthday(client, config_file):
+    """公历、农历至少填一个 —— 两个都空没有意义。
+
+    公历本身不再是必填：只过农历生日的人可以不填公历。
+    """
     before = config_file.read_text(encoding="utf-8")
     resp = await client.post(
         "/recipients",
-        data={"name": "无生日", "solar_birthday": "", "reminder_days": "3"},
+        data={"name": "无生日", "solar_birthday": "", "lunar_birthday": "", "reminder_days": "3"},
     )
     assert resp.status_code == 400
-    assert "请填写身份证出生年月日" in resp.text
+    assert "至少填一个" in resp.text
     # 校验失败不应写盘
     assert config_file.read_text(encoding="utf-8") == before
 
@@ -304,9 +307,8 @@ async def test_form_has_no_email_or_template_field(client):
     assert resp.status_code == 200
     assert 'name="email"' not in resp.text
     assert 'name="template_file"' not in resp.text
-    assert 'name="lunar_birthday"' not in resp.text
-    # 应有的四个字段
-    for field in ("name", "solar_birthday", "reminder_days", "note"):
+    # 应有的字段（lunar_birthday 现在可以手填了，见"只过农历"的需求）
+    for field in ("name", "solar_birthday", "lunar_birthday", "reminder_days", "note"):
         assert f'name="{field}"' in resp.text, f"缺少字段 {field}"
 
 
@@ -1139,29 +1141,39 @@ async def test_api_lunar_handles_bad_input(client):
     assert resp.json()["ok"] is False
 
 
-async def test_form_has_no_lunar_input(client):
-    """表单不应再暴露农历输入框 —— 它由阳历自动推导。"""
+async def test_form_has_lunar_input(client):
+    """表单要有农历输入框 —— 支持"只过农历生日"与"农历公历不同天"。
+
+    通常留空（填了完整公历会自动换算），但必须能填。
+    """
     resp = await client.get("/recipients/new")
     assert resp.status_code == 200
-    assert 'name="lunar_birthday"' not in resp.text
-    assert 'id="lunar_birthday"' not in resp.text
-    # 字段标签应叫"身份证出生年月日"
-    assert "身份证出生年月日" in resp.text
-    # 旧的解释性小字已按需求移除
-    assert "身份证上的出生日期，例如" not in resp.text
-    # 应有农历预览占位
+    assert 'name="lunar_birthday"' in resp.text
+    assert 'id="lunar_birthday"' in resp.text
+    assert "公历生日" in resp.text
     assert "农历生日" in resp.text
+    # 说明里要讲清"通常留空"
+    assert "通常留空" in resp.text
 
 
 async def test_form_shows_derived_lunar_on_edit(client):
-    """编辑页应显示由阳历推导的农历，以及对应的阳历生日。"""
+    """编辑页显示推导出的农历预览，但**不回填**农历输入框。
+
+    张三 solar=1990-01-01 -> 农历 1989年腊月初五。回填的话使用者会以为
+    那是他手填的值；留空 + 预览才是对的（推导值随时可由公历重算）。
+    """
     resp = await client.get("/recipients/0/edit")
     assert resp.status_code == 200
-    # 张三 solar=1990-01-01 -> 农历 1989年腊月初五
+    # 预览里有推导结果
     assert "腊月初五" in resp.text
-    # 新文案：用"下次"
     assert "下次农历生日" in resp.text
     assert "下次阳历生日" in resp.text
+    # 但输入框本身是空的（值是自动推导出来的，不是他填的）
+    import re
+
+    m = re.search(r'id="lunar_birthday"[^>]*value="([^"]*)"', resp.text)
+    assert m is not None
+    assert m.group(1) == "", f"农历框不该回填推导值，实际是 {m.group(1)!r}"
 
 
 async def test_api_lunar_returns_next_solar(client):
@@ -1319,14 +1331,19 @@ def test_lunar_conversion_rejects_invalid_dates():
 def test_validate_solar_date_messages():
     from src.web.lunar import validate_solar_date
 
+    # 空值不再报"请填写" —— 公历不是必填（只过农历生日的人可以不填）
     ok, msg = validate_solar_date("")
-    assert ok is False and "请填写" in msg
+    assert ok is False and msg == ""
 
     ok, msg = validate_solar_date("1990-01-32")
     assert ok is False and "不合理" in msg
 
     ok, msg = validate_solar_date("1990-01-20")
     assert ok is True
+
+    # 只有月日也有效，且提示与完整日期不同
+    ok, msg = validate_solar_date("0606")
+    assert ok is True and "月日" in msg
 
 
 # ---------- 相对年份（供内部使用，界面文案用"下次"） ----------

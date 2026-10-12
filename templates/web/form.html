@@ -17,6 +17,9 @@
   {% if errors.__all__ %}
     <p class="flash flash--err" role="alert">{{ errors.__all__ }}</p>
   {% endif %}
+  {% if errors.at_least_one %}
+    <p class="flash flash--err" role="alert">{{ errors.at_least_one }}</p>
+  {% endif %}
 
   <form class="form" method="post"
         action="{{ ('/recipients/' ~ index) if is_edit else '/recipients' }}"
@@ -31,7 +34,7 @@
     </div>
 
     <div class="field{% if errors.solar_birthday %} field--bad{% endif %}">
-      <label for="solar_birthday">身份证出生年月日 <span class="req" aria-hidden="true">*</span></label>
+      <label for="solar_birthday">公历生日</label>
 
       <div class="input-group">
         <input id="solar_birthday" name="solar_birthday" type="text" class="mono"
@@ -56,6 +59,12 @@
         <p class="field__err" id="solar-err">{{ errors.solar_birthday }}</p>
       {% endif %}
 
+      <p class="field__hint">
+        身份证上的出生日期，填 <strong>8 位数字</strong>（如 <code>19900120</code>）。
+        只知道月日、不知道年份就填 <strong>4 位</strong>（如 <code>0606</code>）——
+        此时不显示年龄，也不会自动算农历。
+      </p>
+
       <p class="lunar-note" id="lunar-note" data-lunar-output aria-live="polite"
          data-state="{{ values.solar_state or 'empty' }}">
         {% if values.lunar_display %}
@@ -73,6 +82,23 @@
           </span>
         {% endif %}
       </p>
+    </div>
+
+    <div class="field{% if errors.lunar_birthday %} field--bad{% endif %}">
+      <label for="lunar_birthday">农历生日</label>
+      <input id="lunar_birthday" name="lunar_birthday" type="text" class="mono"
+             inputmode="numeric" autocomplete="off"
+             placeholder="19891224" value="{{ values.lunar_birthday or '' }}"
+             {% if errors.lunar_birthday %}aria-describedby="lunar-err" aria-invalid="true"{% endif %}>
+      <p class="field__hint">
+        <strong>通常留空</strong> —— 填了上面的完整公历会自动换算。
+        两种情况下才需要手填：<strong>只过农历生日</strong>（公历留空），
+        或农历与公历不是同一天。填 8 位（<code>19891224</code>）或只填月日
+        （<code>1224</code> = 腊月廿四）。
+      </p>
+      {% if errors.lunar_birthday %}
+        <p class="field__err" id="lunar-err">{{ errors.lunar_birthday }}</p>
+      {% endif %}
     </div>
 
     <div class="field{% if errors.reminder_days %} field--bad{% endif %}">

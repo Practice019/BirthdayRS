@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from lunar_python import Solar
 
@@ -30,6 +30,7 @@ from src.core.config import Recipient, SMTPConfig
 from src.notification.sender_email import EmailSender
 from src.notification.sender_serverchan import ServerChanSender
 from src.web.lunar import (
+    parse_month_day,
     lunar_display,
     next_solar_for_lunar,
     parse_iso_date,
@@ -219,6 +220,32 @@ def _parse_iso(value: object) -> Optional[date]:
     return parse_iso_date(value)
 
 
+def _parse_birth_value(value: object) -> Optional[Tuple[date, Optional[int]]]:
+    """解析生日字段，返回 ``(用于匹配的日期, 出生年或 None)``。
+
+    支持两种写法：
+
+    - 完整日期 ``1990-06-06`` → ``(date(1990,6,6), 1990)``，能算年龄
+    - 只有月日 ``0606`` / ``06-06`` → ``(date(2000,6,6), None)``，只按公历/农历匹配
+
+    无年时用 2000 年做占位：它是闰年，2 月 29 日也能表示；匹配逻辑本来就
+    只看月日，占位年不会影响结果。``year`` 返回 ``None`` 明确告诉调用方
+    "别算年龄" —— 编造一个年龄比不显示更糟。
+    """
+    parsed = _parse_iso(value)
+    if parsed is not None:
+        return parsed, parsed.year
+
+    month_day = parse_month_day(value)
+    if month_day is None:
+        return None
+    month, day = month_day
+    try:
+        return date(2000, month, day), None
+    except ValueError:
+        return None
+
+
 def _next_solar_occurrence(birth: date, today: date) -> Optional[date]:
     """阳历生日的下一次出现日期（只看月/日）。"""
     for offset in range(_SOLAR_YEAR_SEARCH):
@@ -279,35 +306,39 @@ def _next_birthday_fast(
     """
     candidates: List[Dict[str, Any]] = []
 
-    # 阳历分支
-    birth_solar = _parse_iso(recipient.solar_birthday)
-    if birth_solar is not None:
+    # 阳历分支。允许"只有月日、没有年"（如 0606）—— 匹配只看月日，
+    # 只是算不出年龄（age=None），界面上相应地不显示"满 X 岁"。
+    solar_birth = _parse_birth_value(recipient.solar_birthday)
+    if solar_birth is not None:
+        birth_solar, solar_year = solar_birth
         hit = _next_solar_occurrence(birth_solar, today)
         if hit is not None:
             candidates.append(
                 {
                     "date": hit,
                     "days_until": (hit - today).days,
-                    "age": hit.year - birth_solar.year,
+                    "age": (hit.year - solar_year) if solar_year else None,
                     "solar_match": True,
                     "lunar_match": False,
                 }
             )
 
-    # 农历分支
+    # 农历分支。同样允许只有月日（如 1224 = 腊月廿四）。
     lunar_source = recipient.lunar_birthday
     if lunar_source:
-        # next_solar_for_lunar 用农历月日反查，最多 3 次转换。
-        lunar_birth = _parse_iso(lunar_source)
+        lunar_birth = _parse_birth_value(lunar_source)
         if lunar_birth is not None:
-            hit = next_solar_for_lunar(lunar_source, today)
+            # next_solar_for_lunar 用农历月日反查，最多 3 次转换。
+            # 无年时补一个占位年（2000）——它只用月日，年份不参与。
+            placeholder = lunar_birth[0] if lunar_birth[1] else date(2000, lunar_birth[0].month, lunar_birth[0].day)
+            hit = next_solar_for_lunar(placeholder.isoformat(), today)
             if hit is not None:
                 candidates.append(
                     {
                         "date": hit,
                         "days_until": (hit - today).days,
                         # 与 checker 一致：命中日期的阳历年 - 农历字符串的年份
-                        "age": hit.year - lunar_birth.year,
+                        "age": (hit.year - lunar_birth[1]) if lunar_birth[1] else None,
                         "solar_match": False,
                         "lunar_match": True,
                     }
@@ -344,11 +375,19 @@ def build_recipient_view(
     solar = raw.get("solar_birthday")
     configured_lunar = raw.get("lunar_birthday")
 
-    solar_date = _parse_iso(solar)
-    solar_valid = bool(solar) and solar_date is not None
+    # 用 _parse_birth_value 而不是 _parse_iso：它同时接受"只有月日"的写法
+    # （0606）。只有完整日期才推导农历 —— 无年时农历逐月漂移，推不出来。
+    solar_parsed = _parse_birth_value(solar)
+    solar_date = solar_parsed[0] if solar_parsed else None
+    solar_year = solar_parsed[1] if solar_parsed else None
+    solar_valid = bool(solar) and solar_parsed is not None
 
     # 阳历不合理时**不推导农历** —— 否则会算出"1990-01-32 -> 正月初六"这类假数据。
-    derived_lunar = solar_to_lunar(solar) if solar_valid else None
+    # 无年（solar_year is None）时也不推导：农历与公历的对应逐年漂移，
+    # 同一个 0606 在不同年份对应不同农历，推导等于编造。
+    derived_lunar = (
+        solar_to_lunar(solar) if (solar_valid and solar_year is not None) else None
+    )
     lunar_text = lunar_display(derived_lunar) if derived_lunar else None
 
     def base(**overrides: Any) -> RecipientView:
@@ -373,7 +412,7 @@ def build_recipient_view(
             "lunar_mismatch": bool(
                 configured_lunar and derived_lunar and configured_lunar != derived_lunar
             ),
-            "solar_invalid": bool(solar) and not solar_date,
+            "solar_invalid": bool(solar) and solar_parsed is None,
             "reminder_days_inherited": reminder_days_inherited,
             "audience": (raw.get("audience") or "self"),
         }

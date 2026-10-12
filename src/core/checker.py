@@ -51,18 +51,81 @@ class BirthdayChecker:
         return (dt.year, dt.month, dt.day)
 
     @staticmethod
+    def _birth_month_day(value: str) -> Optional[Tuple[int, int, Optional[int]]]:
+        """解析生日字段，返回 ``(月, 日, 出生年或 None)``。
+
+        支持两种写法：
+
+        - ``1990-06-06`` → ``(6, 6, 1990)``，能算年龄
+        - ``0606`` / ``06-06`` → ``(6, 6, None)``，只有月日
+
+        **只用月日参与匹配**，年份仅用于算年龄；无年时返回 ``None``，
+        调用方相应地不显示"满 X 岁"。
+
+        不接受非法月日（``0230`` 这类）—— 与 web 层同一原则：
+        宁可报错，不给假数据。
+        """
+        text = (value or "").strip()
+        if not text:
+            return None
+
+        # 完整日期
+        try:
+            dt = datetime.strptime(text, "%Y-%m-%d")
+            return dt.month, dt.day, dt.year
+        except ValueError:
+            pass
+
+        # 只有月日：0606 / 06-06 / 6-6
+        digits = text.replace(" ", "")
+        if "-" in digits:
+            parts = [x for x in digits.split("-") if x]
+            if len(parts) != 2 or not all(x.isdigit() for x in parts):
+                return None
+            month, day = int(parts[0]), int(parts[1])
+        elif len(digits) == 4 and digits.isdigit():
+            month, day = int(digits[:2]), int(digits[2:])
+        else:
+            return None
+
+        # 用闰年校验真实性：容纳 2 月 29 日，拒绝 0230 / 1301
+        try:
+            date(2000, month, day)
+        except ValueError:
+            return None
+        return month, day, None
+
+    @staticmethod
     def _next_solar_date(birth_str: str, today: datetime) -> Optional[date]:
         """阳历生日（月/日）的**下一次**出现日期，不早于今天。
 
         与匹配逻辑同口径：只看月日。今天是今天，下一次可能是今年（没过）或明年。
+        接受"只有月日"的写法（如 0606）—— 年份不参与计算。
         """
-        try:
-            birth = datetime.strptime(birth_str, "%Y-%m-%d")
-        except ValueError:
+        parsed = BirthdayChecker._birth_month_day(birth_str)
+        if parsed is None:
             return None
-        target = datetime(today.year, birth.month, birth.day)
+        month, day = parsed[0], parsed[1]
+        try:
+            target = datetime(today.year, month, day)
+        except ValueError:
+            # 2 月 29 日在非闰年不存在：往后再找一个闰年
+            for offset in range(1, 5):
+                try:
+                    return datetime(today.year + offset, month, day).date()
+                except ValueError:
+                    continue
+            return None
         if target < datetime(today.year, today.month, today.day):
-            target = datetime(today.year + 1, birth.month, birth.day)
+            try:
+                target = datetime(today.year + 1, month, day)
+            except ValueError:
+                for offset in range(2, 6):
+                    try:
+                        return datetime(today.year + offset, month, day).date()
+                    except ValueError:
+                        continue
+                return None
         return target.date()
 
     @staticmethod
@@ -73,11 +136,10 @@ class BirthdayChecker:
         扫 400 天约 700ms；Lunar.fromYmd(...).getSolar() 直接反查，
         最多试 3 个农历年，快 20 倍以上。与 src/web/domain 的同名函数口径一致。
         """
-        try:
-            birth = datetime.strptime(lunar_str, "%Y-%m-%d")
-        except ValueError:
+        parsed = BirthdayChecker._birth_month_day(lunar_str)
+        if parsed is None:
             return None
-        month, day = birth.month, birth.day
+        month, day = parsed[0], parsed[1]
 
         for lunar_year in range(today.year, today.year + 3):
             try:
@@ -169,26 +231,36 @@ class BirthdayChecker:
             if term:
                 extra_info['solar_term'] = term
 
-            # 检查阳历生日
+            # 检查阳历生日。允许"只有月日"（如 0606）—— 匹配只看月日，
+            # 只是算不出年龄。
             if recipient.solar_birthday:
-                try:
-                    birth_year, birth_month, birth_day = self._convert_to_date_parts(
-                        recipient.solar_birthday)
+                parsed = self._birth_month_day(recipient.solar_birthday)
+                if parsed is None:
+                    logger.error(
+                        f"Invalid solar birthday format for {recipient.name}: "
+                        f"{recipient.solar_birthday}"
+                    )
+                else:
+                    birth_month, birth_day, birth_year = parsed
                     for i, check_date in enumerate(check_dates):
                         year, month, day = self._convert_to_date_parts(check_date)
                         if month == birth_month and day == birth_day:
                             extra_info['solar_match'] = True
                             extra_info['days_until'] = i
-                            extra_info['age'] = year - birth_year
+                            if birth_year is not None:
+                                extra_info['age'] = year - birth_year
                             break
-                except ValueError as e:
-                    logger.error(f"Invalid solar birthday format for {recipient.name}: {e}")
 
-            # 检查农历生日
+            # 检查农历生日。同样允许只有月日（如 1224 = 腊月廿四）。
             if recipient.lunar_birthday:
-                try:
-                    birth_year, birth_month, birth_day = self._convert_to_date_parts(
-                        recipient.lunar_birthday)
+                parsed = self._birth_month_day(recipient.lunar_birthday)
+                if parsed is None:
+                    logger.error(
+                        f"Invalid lunar birthday format for {recipient.name}: "
+                        f"{recipient.lunar_birthday}"
+                    )
+                else:
+                    birth_month, birth_day, birth_year = parsed
                     for i, check_date in enumerate(check_dates):
                         year, month, day = self._convert_to_date_parts(check_date)
                         check_solar = Solar.fromYmd(year, month, day)
@@ -197,10 +269,9 @@ class BirthdayChecker:
                                 and check_lunar.getDay() == birth_day):
                             extra_info['lunar_match'] = True
                             extra_info['days_until'] = i
-                            extra_info['age'] = year - birth_year
+                            if birth_year is not None:
+                                extra_info['age'] = year - birth_year
                             break
-                except ValueError as e:
-                    logger.error(f"Invalid lunar birthday format for {recipient.name}: {e}")
 
             # 两个生日各自的下一次日期（独立于窗口命中与否）：
             # 通知文案要两行都写 —— 阳历生日、农历生日各一行，各自带日期。

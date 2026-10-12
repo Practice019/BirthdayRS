@@ -42,6 +42,7 @@ from src.web.lunar import (
     lunar_display,
     next_solar_for_lunar,
     normalize_solar_input,
+    format_birth_input,
     parse_iso_date,
     solar_to_lunar,
     to_lunar_display_from_solar,
@@ -90,6 +91,18 @@ def _channel_label(class_name: str) -> str:
 
 def _channel_to_label(name: str) -> str:
     return _CHANNEL_NAMES.get(str(name), str(name))
+
+
+def _can_derive_lunar(raw: Dict[str, Any]) -> bool:
+    """这条记录的农历能不能由公历自动推导。
+
+    能推导 = 公历是**完整日期**（有年）。只有月日（0606）推不出农历 ——
+    农历与公历的对应逐年漂移。推导得出时，编辑页不必回填农历框，
+    免得使用者以为那是他手填的值。
+    """
+    solar = raw.get("solar_birthday")
+    parsed = parse_iso_date(normalize_solar_input(solar))
+    return parsed is not None
 
 
 def create_app(config_path: Optional[str] = None, token: Optional[str] = None) -> FastAPI:
@@ -230,9 +243,18 @@ def create_app(config_path: Optional[str] = None, token: Optional[str] = None) -
         )
         values["solar_message"] = message
 
-        values["lunar_display"] = (
-            to_lunar_display_from_solar(solar) if valid else None
+        # 只有月日时**不推导**农历：农历与公历的对应逐年漂移，
+        # 同一个 0606 在不同年份对应不同农历，推导等于编造。
+        has_year = parse_iso_date(solar) is not None
+        # 农历输入框回填成 8 位数字（或 4 位月日），与公历字段一致
+        values["lunar_birthday"] = format_birth_input(
+            values.get("lunar_birthday")
         )
+
+        values["lunar_display"] = (
+            to_lunar_display_from_solar(solar) if (valid and has_year) else None
+        )
+        values["solar_month_day_only"] = valid and not has_year
         if valid:
             stored = solar_to_lunar(solar)
             # 农历生日对应的阳历日期（农历月日反查），显示在农历后面的括号里
@@ -541,7 +563,17 @@ def create_app(config_path: Optional[str] = None, token: Optional[str] = None) -
 
         values = {
             "name": raw.get("name", ""),
-            "solar_birthday": raw.get("solar_birthday") or "",
+            # 这里传**存储格式**，由 with_lunar_preview 统一转成输入框写法 ——
+            # 预先转成 8 位数字会让它的校验/推导拿到一个解析不了的值。
+            "solar_birthday": as_iso_text(raw.get("solar_birthday")),
+            # 农历回填：配置里存的多半是**自动推导**的值，回填后使用者会以为
+            # 那是他手填的。所以只在"公历缺失或算不出农历"时才回填 ——
+            # 也就是真正需要他手动维护的那种情况。
+            "lunar_birthday": (
+                as_iso_text(raw.get("lunar_birthday"))
+                if not _can_derive_lunar(raw)
+                else ""
+            ),
             # 只有配置里**显式写过** reminder_days 才回填；没写就是"沿用全局默认"，
             # 表单留空比回填一个具体数字更贴近事实。
             "reminder_days": raw.get("reminder_days", ""),

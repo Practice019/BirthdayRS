@@ -72,6 +72,73 @@ def as_iso_text(value: object) -> str:
     return str(value).strip()
 
 
+#: 无年份的生日写法：4 位数字 ``MMDD``（如 ``0606`` 表示 6 月 6 日）。
+#: 与 8 位的 ``YYYYMMDD`` 区分开 —— 都是纯数字，输入体验一致。
+MONTH_DAY_LEN = 4
+
+
+def parse_month_day(value: object) -> Optional[Tuple[int, int]]:
+    """解析"只有月日、没有年份"的生日，返回 ``(month, day)``。
+
+    接受 ``0606`` / ``06-06`` / ``6-6`` 三种写法。**用 ``datetime.date``
+    校验真实性**（借闰年 2000 年判定 2 月 29 日合法），拒绝 ``0230``、``1301``
+    这类不存在的月日 —— 与 ``parse_iso_date`` 同一条原则：宁可报错，不给假数据。
+
+    闰日（02-29）在没有年份时是合法的：这个人四年过一次生日，
+    匹配逻辑本来就只看月日。
+    """
+    text = as_iso_text(value)
+    if not text:
+        return None
+
+    digits = text.replace(" ", "")
+    if "-" in digits:
+        # 06-06 / 6-6 都接受：分段后各自转整数，不要求补零
+        parts = [p for p in digits.split("-") if p]
+        if len(parts) != 2 or not all(p.isdigit() for p in parts):
+            return None
+        month, day = int(parts[0]), int(parts[1])
+    else:
+        if len(digits) != MONTH_DAY_LEN or not digits.isdigit():
+            return None
+        month, day = int(digits[:2]), int(digits[2:])
+    # 用 2000 年（闰年）校验：它同时容纳 2 月 29 日与所有普通日期。
+    try:
+        datetime.date(2000, month, day)
+    except ValueError:
+        return None
+    return month, day
+
+
+def is_month_day_only(value: object) -> bool:
+    """这个值是不是"只有月日、没有年份"的写法。"""
+    return parse_month_day(value) is not None
+
+
+def format_month_day(value: object) -> str:
+    """把 ``(月, 日)`` 反向格式化成 4 位数字，供表单回填。"""
+    parsed = parse_month_day(value)
+    if parsed is None:
+        return as_iso_text(value)
+    return f"{parsed[0]:02d}{parsed[1]:02d}"
+
+
+def format_birth_input(value: object) -> str:
+    """把存储的生日值格式化成输入框里的写法。
+
+    - ``1990-06-06`` → ``19900606``（8 位数字，与输入要求一致）
+    - ``0606``       → ``0606``（保持 4 位）
+    - 无法识别时原样返回，不把使用者的数据弄丢
+    """
+    parsed = parse_iso_date(value)
+    if parsed is not None:
+        return f"{parsed.year:04d}{parsed.month:02d}{parsed.day:02d}"
+    month_day = parse_month_day(value)
+    if month_day is not None:
+        return f"{month_day[0]:02d}{month_day[1]:02d}"
+    return as_iso_text(value)
+
+
 def parse_iso_date(value: object) -> Optional[datetime.date]:
     """严格解析 ``YYYY-MM-DD``（也接受 YAML 解析出的 date 对象）。
 
@@ -252,13 +319,16 @@ def next_solar_for_lunar(
 def validate_solar_date(value: object) -> Tuple[bool, str]:
     """给表单实时校验用：返回 ``(是否有效, 提示文案)``。
 
-    空值视为"未填"而非"错误"，由必填校验单独处理。
+    接受完整日期（``1990-01-20``）与只有月日（``0606``）。
+    空值视为"未填"而非"错误" —— 只过农历生日的人可以不填公历。
     """
     text = as_iso_text(value)
     if not text:
-        return False, "请填写身份证出生年月日"
+        return False, ""
 
-    if parse_iso_date(text) is None:
-        return False, INVALID_SOLAR_HINT
+    if parse_iso_date(text) is not None:
+        return True, "有效"
+    if parse_month_day(text) is not None:
+        return True, "只有月日"
 
-    return True, "有效"
+    return False, INVALID_SOLAR_HINT
