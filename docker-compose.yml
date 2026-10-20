@@ -3,9 +3,10 @@
 #
 # 两种用法：
 #
-#   1) 每天定时发一次提醒（推荐，最省事）
-#      docker compose run --rm birthdayrs
-#      然后把这个命令交给宿主机的 cron / 任务计划程序
+#   1) 常驻 Web 管理台（含每日自动发送，推荐）
+#      docker compose --profile web up -d
+#      web 进程每天 09:00 会自动检查并发提醒（--send-time 可改时刻）。
+#      想用外部 cron 的话：docker compose run --rm birthdayrs
 #
 #   2) 常驻 Web 管理台（有端口，适合局域网访问）
 #      docker compose --profile web up -d

@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -53,6 +54,7 @@ from src.web.repository import (
     ConfigRepository,
     RecipientNotFoundError,
 )
+from src.web.scheduler import DEFAULT_SEND_HOUR, DEFAULT_SEND_MINUTE, DailyScheduler
 from src.web.schemas import RecipientForm
 from src.web.settings_schemas import (
     ResendSettingsForm,
@@ -105,19 +107,81 @@ def _can_derive_lunar(raw: Dict[str, Any]) -> bool:
     return parsed is not None
 
 
-def create_app(config_path: Optional[str] = None, token: Optional[str] = None) -> FastAPI:
+def create_app(
+    config_path: Optional[str] = None,
+    token: Optional[str] = None,
+    auto_send: bool = False,
+    send_hour: int = DEFAULT_SEND_HOUR,
+    send_minute: int = DEFAULT_SEND_MINUTE,
+) -> FastAPI:
     """应用工厂。
 
     ``token`` 非空时启用访问令牌鉴权（见 ``src/web/auth.py``）。默认 ``None``
     表示不鉴权 —— 桌面端与测试用同一套路由，它们不需要这一层；
     命令行 ``web`` 命令会总是传一个 token。
+
+    ``auto_send`` 为真时启动每日定时发送（见 ``src/web/scheduler.py``）。
+    **默认关闭**：测试不该无意中真的发出邮件。``web`` 命令默认开启 ——
+    容器只跑这一个进程，定时器不挂在它身上就没有别的地方可挂。
     """
     config_manager = ConfigManager(config_path)
     config_manager.config  # 触发加载，配置有问题时尽早失败
 
     repo = ConfigRepository(config_manager.config_path)
 
-    app = FastAPI(title="BirthdayRS 管理台", version="0.1.0", docs_url=None, redoc_url=None)
+    # ---- 每日自动发送（可选）----
+    #
+    # 为什么挂在 web 进程里：容器只跑这一个进程（`web --config ...`）。
+    # `run` 命令本身不带定时能力，没有调度器就永远不会自动发 ——
+    # 表现是"测试发送能用，但生日那天没收到"。
+    scheduler: Optional[DailyScheduler] = None
+
+    async def _run_daily_check() -> int:
+        """跑一次完整的检查+发送。供定时器 await 调用。
+
+        每次都用**最新**配置：使用者可能在界面里改了收件人或渠道，
+        用启动时的快照会按旧数据发信。
+
+        **必须是 async 且被 await**：这个定时器跑在 FastAPI 的事件循环里，
+        用 asyncio.run() 会抛 "cannot be called from a running event loop"。
+        """
+        from src.main import BirthdayReminder
+
+        config_manager.reload()
+        reminder = BirthdayReminder(str(config_manager.config_path))
+        return await reminder.run()
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        nonlocal scheduler
+        if auto_send:
+            # 标记文件放在配置同级目录（容器里是 /app/data），随挂载持久化 ——
+            # 否则容器重启后"今天发过了"这个状态会丢，收件人一天收两条。
+            scheduler = DailyScheduler(
+                _run_daily_check,
+                log_dir=Path(config_manager.config_path).parent,
+                hour=send_hour,
+                minute=send_minute,
+            )
+            scheduler.start()
+            logger.info(
+                "每日自动发送已启用：%02d:%02d（时区跟随容器 TZ）", send_hour, send_minute
+            )
+        else:
+            logger.info("每日自动发送未启用（auto_send=False）")
+        try:
+            yield
+        finally:
+            if scheduler is not None:
+                await scheduler.stop()
+
+    app = FastAPI(
+        title="BirthdayRS 管理台",
+        version="0.1.0",
+        docs_url=None,
+        redoc_url=None,
+        lifespan=lifespan,
+    )
     templates = Jinja2Templates(directory=str(_WEB_TEMPLATES))
     templates.env.filters["dash"] = lambda v: v if v not in (None, "") else "—"
     # 渠道名 → 界面称呼。模板里不要出现 resend / wxpusher 这类内部标识。

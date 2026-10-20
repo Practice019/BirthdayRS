@@ -103,8 +103,12 @@ class BirthdayReminder:
             logger.error(f"Failed to check birthdays: {e}")
             raise
 
-    async def run(self) -> None:
-        """运行生日提醒主流程"""
+    async def run(self) -> int:
+        """运行生日提醒主流程，返回**尝试发送的提醒条数**。
+
+        返回值给调用方（网页里的每日定时器）记录日志用 ——
+        "今天发了 0 条"和"今天发了 2 条"在排查时是完全不同的信息。
+        """
         try:
             logger.info("Starting birthday reminder application")
 
@@ -120,10 +124,16 @@ class BirthdayReminder:
 
             # 并发发送所有提醒
             if tasks:
-                await asyncio.gather(*tasks, return_exceptions=True)
+                # return_exceptions=True：一个人失败不该连累其他人
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                for res in results:
+                    if isinstance(res, Exception):
+                        logger.error(f"一条提醒发送失败: {type(res).__name__}: {res}")
                 logger.info(f"Successfully processed {len(tasks)} birthday reminders")
-            else:
-                logger.info("No birthdays to process today")
+                return len(tasks)
+
+            logger.info("No birthdays to process today")
+            return 0
 
         except Exception as e:
             logger.error(f"Application error: {type(e).__name__}: {e}")
@@ -223,8 +233,17 @@ def info(config):
 @click.option('--reload', help='代码改动后自动重载（开发用）', is_flag=True, default=False)
 @click.option('--token', help='访问令牌；不指定则每次启动随机生成', default=None)
 @click.option('--no-auth', 'no_auth', help='关闭访问令牌鉴权（仅本机自用）', is_flag=True, default=False)
-def web(config, host, port, reload, token, no_auth):
-    """启动管理台（浏览器界面）"""
+@click.option('--auto-send/--no-auto-send', 'auto_send',
+              help='在网页进程里每天自动发送一次（默认开启）', default=True)
+@click.option('--send-time', help='每天发送的时刻，24 小时制 HH:MM，默认 09:00',
+              default="09:00")
+def web(config, host, port, reload, token, no_auth, auto_send, send_time):
+    """启动管理台（浏览器界面）
+
+    **默认每天 09:00 自动发送一次提醒**（--auto-send）。因为容器只跑这一个
+    进程，定时器不挂在它身上就没有别的地方可挂 —— 不开启的话配置再对也
+    永远不会自动发出提醒。用 --no-auto-send 关掉（例如另有 cron 在跑）。
+    """
     try:
         import uvicorn
         from src.web.app import create_app
@@ -238,8 +257,25 @@ def web(config, host, port, reload, token, no_auth):
     # 默认总是启用鉴权：这个界面能改配置、能触发真实发信，不该对任何能连到端口的人开放。
     auth_token = None if no_auth else resolve_token(token)
 
+    send_hour, send_minute = 9, 0
+    if auto_send:
+        try:
+            hh, mm = (send_time or "09:00").split(":")
+            send_hour, send_minute = int(hh), int(mm)
+            if not (0 <= send_hour <= 23 and 0 <= send_minute <= 59):
+                raise ValueError
+        except (ValueError, AttributeError):
+            print(f"❌ --send-time 格式不对：{send_time!r}，要写成 09:00 这样")
+            sys.exit(1)
+
     try:
-        app = create_app(config, token=auth_token)
+        app = create_app(
+            config,
+            token=auth_token,
+            auto_send=auto_send,
+            send_hour=send_hour,
+            send_minute=send_minute,
+        )
     except Exception as e:
         logger.error(f"Failed to start web UI: {e}")
         print(f"❌ 启动失败: {e}")
@@ -259,6 +295,10 @@ def web(config, host, port, reload, token, no_auth):
         print(f"管理台已启动: http://{host}:{port} （鉴权已关闭）")
         logger.warning("管理台已启动且未启用鉴权，请勿对公网开放")
 
+    if auto_send:
+        print(f"每天 {send_hour:02d}:{send_minute:02d} 自动发送提醒（--no-auto-send 可关闭）。")
+    else:
+        print("自动发送已关闭（--auto-send 可开启）。")
     print("按 Ctrl+C 停止。")
     uvicorn.run(app, host=host, port=port, reload=reload, log_level="info")
 

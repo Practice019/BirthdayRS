@@ -206,6 +206,26 @@ recipients:
 **闰月按绝对月份记录**，所以闰月出生的人每年都会收到提醒（而不是只在有闰月的那年）。
 这是有意的取舍，详见 [DESIGN.md](DESIGN.md)。
 
+## 每日自动发送
+
+`web` 命令**默认每天 09:00 自动检查并发一次提醒**。窗口内的每一天都会发
+（`reminder_days: 3` 就是"提前 3 天开始，每天一条，直到生日当天"）。
+
+```bash
+# 改发送时间
+docker run ... birthdayrs:web web --config /app/data/config.yml --send-time 08:30
+
+# 关掉（例如另有 cron 在跑）
+docker run ... birthdayrs:web web --config /app/data/config.yml --no-auto-send
+```
+
+> **为什么做在网页进程里**：容器只跑 `web` 这一个进程。`run` 命令只是
+> "跑一次检查就退出"，它自己不带定时能力 —— 没有调度器就永远不会自动发，
+> 表现就是"测试发送能用，但生日那天收不到"。
+>
+> 同一天只发一次：发完会在配置目录写一个 `.last_auto_send` 记录日期，
+> 容器重启也不会重复发。
+
 ## 通知渠道
 
 可以同时启用多个，`start_notification` 里逗号分隔；设置页能勾选邮件与手机推送。
