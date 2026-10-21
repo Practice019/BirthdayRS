@@ -167,8 +167,12 @@ class BirthdayChecker:
             Tuple[bool, Dict]: 是否是生日和额外信息
         """
         try:
+            # 提醒窗口 = 生日前第 reminder_days 天 … 生日前一天。
+            # **不含生日当天**（i 从 1 开始）：生日到了就不必再提醒"该给谁过生日"了，
+            # 那时祝福应该已经送到。以 22 号生日、reminder_days=3 为例，
+            # 19/20/21 号早上各发一次，22 号早上不发。
             check_dates = []
-            for i in range(recipient.reminder_days + 1):
+            for i in range(1, recipient.reminder_days + 1):
                 check_date = today + timedelta(days=i)
                 check_dates.append(check_date)
 
@@ -242,7 +246,7 @@ class BirthdayChecker:
                     )
                 else:
                     birth_month, birth_day, birth_year = parsed
-                    for i, check_date in enumerate(check_dates):
+                    for i, check_date in enumerate(check_dates, start=1):
                         year, month, day = self._convert_to_date_parts(check_date)
                         if month == birth_month and day == birth_day:
                             extra_info['solar_match'] = True
@@ -261,7 +265,7 @@ class BirthdayChecker:
                     )
                 else:
                     birth_month, birth_day, birth_year = parsed
-                    for i, check_date in enumerate(check_dates):
+                    for i, check_date in enumerate(check_dates, start=1):
                         year, month, day = self._convert_to_date_parts(check_date)
                         check_solar = Solar.fromYmd(year, month, day)
                         check_lunar = check_solar.getLunar()

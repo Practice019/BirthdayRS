@@ -54,7 +54,13 @@ from src.web.repository import (
     ConfigRepository,
     RecipientNotFoundError,
 )
-from src.web.scheduler import DEFAULT_SEND_HOUR, DEFAULT_SEND_MINUTE, DailyScheduler
+from src.web.scheduler import (
+    DEFAULT_SEND_HOUR,
+    DEFAULT_SEND_MINUTE,
+    EVE_HOUR,
+    EVE_MINUTE,
+    DailyScheduler,
+)
 from src.web.schemas import RecipientForm
 from src.web.settings_schemas import (
     ResendSettingsForm,
@@ -136,8 +142,15 @@ def create_app(
     # 表现是"测试发送能用，但生日那天没收到"。
     scheduler: Optional[DailyScheduler] = None
 
-    async def _run_daily_check() -> int:
-        """跑一次完整的检查+发送。供定时器 await 调用。
+    async def _run_daily_check(slot: str = "morning") -> int:
+        """跑一次检查+发送。供定时器 await 调用。
+
+        ``slot`` 区分两趟：
+
+        - ``morning``（默认 09:00）：给窗口内（生日前 N 天到生日前一天）的
+          每个人发一次
+        - ``eve``（默认 23:55）：只给**明天过生日**的人再发最后一趟，
+          跨进生日之前提醒一次
 
         每次都用**最新**配置：使用者可能在界面里改了收件人或渠道，
         用启动时的快照会按旧数据发信。
@@ -149,7 +162,7 @@ def create_app(
 
         config_manager.reload()
         reminder = BirthdayReminder(str(config_manager.config_path))
-        return await reminder.run()
+        return await reminder.run(only_eve=(slot == "eve"))
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -162,10 +175,16 @@ def create_app(
                 log_dir=Path(config_manager.config_path).parent,
                 hour=send_hour,
                 minute=send_minute,
+                eve_hour=EVE_HOUR,
+                eve_minute=EVE_MINUTE,
             )
             scheduler.start()
             logger.info(
-                "每日自动发送已启用：%02d:%02d（时区跟随容器 TZ）", send_hour, send_minute
+                "每日自动发送已启用：%02d:%02d 与前夜 %02d:%02d（时区跟随容器 TZ）",
+                send_hour,
+                send_minute,
+                EVE_HOUR,
+                EVE_MINUTE,
             )
         else:
             logger.info("每日自动发送未启用（auto_send=False）")

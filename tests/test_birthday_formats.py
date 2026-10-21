@@ -65,13 +65,16 @@ def test_parse_birth_value_year_and_month_day():
 
 
 def test_yearless_solar_matches():
-    """只有月日的记录也要能触发提醒。"""
+    """只有月日的记录也要能触发提醒。
+
+    注意提醒窗口**不含生日当天**，所以用生日前一天验证。
+    """
     checker = BirthdayChecker()
     r = Recipient(name="无年", solar_birthday="0606", reminder_days=3)
 
-    ok, extra = checker._check_birthday(r, datetime(2027, 6, 6))
+    ok, extra = checker._check_birthday(r, datetime(2027, 6, 5))
     assert extra["solar_match"] is True
-    assert extra["days_until"] == 0
+    assert extra["days_until"] == 1
     assert extra["age"] == 0, "无年时算不出年龄，应保持默认值"
 
 
@@ -86,19 +89,22 @@ def test_yearless_has_no_age():
 
 
 def test_yearless_lunar_matches():
-    """只有农历月日（如 1224 = 腊月廿四）也要能提醒。"""
+    """只有农历月日（如 1224 = 腊月廿四）也要能提醒。
+
+    2027-01-31 是农历腊月廿四，窗口不含当天 → 用 01-30 验证。
+    """
     checker = BirthdayChecker()
     r = Recipient(name="农历", lunar_birthday="1224", reminder_days=3)
-    # 2027-01-31 是农历腊月廿四
-    _, extra = checker._check_birthday(r, datetime(2027, 1, 31))
+    _, extra = checker._check_birthday(r, datetime(2027, 1, 30))
     assert extra["lunar_match"] is True
+    assert extra["days_until"] == 1
 
 
 def test_lunar_only_record_works():
     """只填农历、完全不填公历 —— 有些人只过农历生日。"""
     checker = BirthdayChecker()
     r = Recipient(name="只农历", lunar_birthday="1224", reminder_days=3)
-    ok, extra = checker._check_birthday(r, datetime(2027, 1, 31))
+    ok, extra = checker._check_birthday(r, datetime(2027, 1, 30))
     assert ok is True
     assert extra["lunar_match"] is True
     assert extra["solar_match"] is False
@@ -210,3 +216,38 @@ def test_form_rejects_both_empty():
 def test_form_rejects_invalid_month_day():
     with pytest.raises(Exception):
         RecipientForm.model_validate({"name": "F", "solar_birthday": "0230"})
+
+
+# ---------- 提醒窗口：生日前 N 天到前一天，不含当天 ----------
+
+
+def test_window_excludes_birthday_itself():
+    """生日当天不再提醒 —— 那时祝福应该已经送到了。
+
+    22 号生日、reminder_days=3：19/20/21 号早上各发一次，22 号不发。
+    """
+    checker = BirthdayChecker()
+    r = Recipient(name="张三", solar_birthday="1990-10-22", reminder_days=3)
+
+    fired = {}
+    for day in range(18, 24):
+        ok, extra = checker._check_birthday(r, datetime(2026, 10, day))
+        fired[day] = (ok, extra.get("days_until"))
+
+    assert fired[18] == (False, 0), "18 号还没进窗口"
+    assert fired[19] == (True, 3)
+    assert fired[20] == (True, 2)
+    assert fired[21] == (True, 1)
+    assert fired[22][0] is False, "生日当天不该再发"
+
+
+def test_window_with_zero_days_is_never():
+    """reminder_days=0（只在当天提醒）+ 不含当天 = 永远不发。
+
+    这是「不含当天」带来的语义收缩，必须让人知道：填 0 等于关掉提醒。
+    """
+    checker = BirthdayChecker()
+    r = Recipient(name="张三", solar_birthday="1990-10-22", reminder_days=0)
+    for day in range(18, 24):
+        ok, _ = checker._check_birthday(r, datetime(2026, 10, day))
+        assert ok is False, f"{day} 号不该发"

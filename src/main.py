@@ -103,11 +103,15 @@ class BirthdayReminder:
             logger.error(f"Failed to check birthdays: {e}")
             raise
 
-    async def run(self) -> int:
+    async def run(self, only_eve: bool = False) -> int:
         """运行生日提醒主流程，返回**尝试发送的提醒条数**。
 
         返回值给调用方（网页里的每日定时器）记录日志用 ——
         "今天发了 0 条"和"今天发了 2 条"在排查时是完全不同的信息。
+
+        ``only_eve=True`` 时只发**生日前夜**那一趟：也就是只挑"明天过生日"
+        （``days_until == 1``）的人。23:55 那趟用它 —— 那时窗口里更早的
+        几天已经在早上发过了，再发一遍就是重复打扰。
         """
         try:
             logger.info("Starting birthday reminder application")
@@ -118,9 +122,13 @@ class BirthdayReminder:
             # 收集需要发送提醒的任务
             tasks = []
             for recipient, is_birthday, extra_info in birthday_results:
-                if is_birthday:
-                    logger.info(f"Processing birthday for {recipient.name}")
-                    tasks.append(self.send_birthday_reminder(recipient, extra_info))
+                if not is_birthday:
+                    continue
+                if only_eve and extra_info.get("days_until") != 1:
+                    # 前夜那趟只关心"明天生日"的人
+                    continue
+                logger.info(f"Processing birthday for {recipient.name}")
+                tasks.append(self.send_birthday_reminder(recipient, extra_info))
 
             # 并发发送所有提醒
             if tasks:

@@ -25,18 +25,32 @@ from typing import Any, Callable, Optional
 
 logger = logging.getLogger(__name__)
 
-#: 默认发送时刻（本地时区）。
+#: 默认的每日发送时刻（本地时区）。
 #: 早上 9 点：符合"提前提醒"的用意，不会在半夜打扰别人。
 DEFAULT_SEND_HOUR = 9
 DEFAULT_SEND_MINUTE = 0
+
+#: 生日前夜的补发时刻（23:55）。
+#:
+#: 使用者要的是"生日前一天晚上最后再提醒一次"—— 生日当天早上就不发了
+#: （那时祝福该送到了），最后一趟落在跨进生日之前。
+#: 23:55 而不是 00:00：留 5 分钟余量，避免刚好卡在日期切换的边界上。
+EVE_HOUR = 23
+EVE_MINUTE = 55
 
 #: 轮询间隔（秒）。30 秒足够让 9:00 的发送在 9:00:30 内完成，
 #: 又不会让日志被刷屏。
 POLL_INTERVAL = 30
 
 
-def _sent_marker_path(log_dir: Path) -> Path:
-    return log_dir / ".last_auto_send"
+def _sent_marker_path(log_dir: Path, slot: str = "morning") -> Path:
+    """各趟发送各用一个标记文件。
+
+    **不能共用一个**：早上 9:00 发过之后，若共用标记，23:55 的
+    前夜提醒就会被判定"今天发过了"而跳过 —— 那正是这一趟要补的东西。
+    """
+    suffix = "" if slot == "morning" else f".{slot}"
+    return log_dir / f".last_auto_send{suffix}"
 
 
 def already_sent_today(marker: Path, today: date) -> bool:
@@ -93,41 +107,49 @@ class DailyScheduler:
         *,
         hour: int = DEFAULT_SEND_HOUR,
         minute: int = DEFAULT_SEND_MINUTE,
+        eve_hour: Optional[int] = EVE_HOUR,
+        eve_minute: Optional[int] = EVE_MINUTE,
         poll_interval: int = POLL_INTERVAL,
     ) -> None:
         self.job = job
-        self.marker = _sent_marker_path(log_dir)
-        self.hour = hour
-        self.minute = minute
+        self.log_dir = log_dir
         self.poll_interval = poll_interval
         self._task: Optional[asyncio.Task] = None
         self._stopping = False
 
+        # 每一趟 = (名字, 时刻, 标记文件)。各自记录"今天发过没"。
+        self.slots: list = [("morning", hour, minute)]
+        if eve_hour is not None and eve_minute is not None:
+            self.slots.append(("eve", eve_hour, eve_minute))
+
+    def marker_for(self, slot: str) -> Path:
+        return _sent_marker_path(self.log_dir, slot)
+
     async def _loop(self) -> None:
-        logger.info(
-            "自动发送已启用：每天 %02d:%02d 检查一次（标记文件 %s）",
-            self.hour,
-            self.minute,
-            self.marker,
-        )
+        desc = "、".join(f"{name} {h:02d}:{m:02d}" for name, h, m in self.slots)
+        logger.info("自动发送已启用：%s（时区跟随容器 TZ）", desc)
+
         while not self._stopping:
             try:
                 now = datetime.now()
                 today = now.date()
-                if should_send_now(now, hour=self.hour, minute=self.minute):
-                    if already_sent_today(self.marker, today):
-                        logger.debug("今天已经发过了，跳过")
-                    else:
-                        logger.info("到点，开始每日自动发送")
-                        # 先打标记再发送：发送中途崩溃时宁可少发一次，
-                        # 也不要因为崩溃重启而重复发（重复发送打扰使用者）。
-                        mark_sent(self.marker, today)
-                        # job 可能是协程：直接 await，不能 asyncio.run() ——
-                        # 这里已经在事件循环里了。
-                        sent = self.job()
-                        if asyncio.iscoroutine(sent):
-                            sent = await sent
-                        logger.info("每日自动发送完成：%s 条", sent)
+                for slot, hour, minute in self.slots:
+                    if not should_send_now(now, hour=hour, minute=minute):
+                        continue
+                    marker = self.marker_for(slot)
+                    if already_sent_today(marker, today):
+                        continue
+
+                    logger.info("到点（%s），开始发送", slot)
+                    # 先打标记再发送：发送中途崩溃时宁可少发一次，
+                    # 也不要因为崩溃重启而重复发（重复发送打扰使用者）。
+                    mark_sent(marker, today)
+                    # job 可能是协程：直接 await，不能 asyncio.run() ——
+                    # 这里已经在事件循环里了。
+                    sent = self.job(slot)
+                    if asyncio.iscoroutine(sent):
+                        sent = await sent
+                    logger.info("发送完成（%s）：%s 条", slot, sent)
             except asyncio.CancelledError:
                 raise
             except Exception:

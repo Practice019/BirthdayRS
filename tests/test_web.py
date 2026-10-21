@@ -1259,8 +1259,8 @@ def test_next_kind_is_none_when_unresolvable():
 def test_both_calendars_trigger_reminders():
     """回归测试：阳历与农历两个生日都必须能触发提醒，不能只认一个。
 
-    checker 的农历分支会覆盖阳历分支的 days_until，因此它内部把两种日历分开判断；
-    这里验证在各自生日当天都能命中。
+    checker 的农历分支会覆盖阳历分支的 days_until，因此它内部把两种日历分开判断。
+    注意提醒窗口**不含生日当天**（那天不再提醒），所以用前一天验证命中。
     """
     from datetime import datetime
 
@@ -1275,13 +1275,19 @@ def test_both_calendars_trigger_reminders():
     )
     checker = BirthdayChecker()
 
-    # 阳历生日当天
-    _, solar_extra = checker._check_birthday(recipient, datetime(2027, 1, 20))
+    # 阳历生日前一天（1-20 是生日，当天不发）
+    _, solar_extra = checker._check_birthday(recipient, datetime(2027, 1, 19))
     assert solar_extra["solar_match"] is True
+    assert solar_extra["days_until"] == 1
 
-    # 农历生日当天（2027-01-31 是农历腊月廿四）
-    _, lunar_extra = checker._check_birthday(recipient, datetime(2027, 1, 31))
+    # 农历生日前一天（2027-01-31 是农历腊月廿四）
+    _, lunar_extra = checker._check_birthday(recipient, datetime(2027, 1, 30))
     assert lunar_extra["lunar_match"] is True
+    assert lunar_extra["days_until"] == 1
+
+    # 生日当天**不该**再提醒
+    _, on_day = checker._check_birthday(recipient, datetime(2027, 1, 20))
+    assert on_day["solar_match"] is False, "生日当天不该再发提醒"
 
     # 农历生日前 3 天也应命中（提前提醒）
     _, early = checker._check_birthday(recipient, datetime(2027, 1, 28))

@@ -90,6 +90,8 @@ class RecipientView:
     week_name: Optional[str]
     #: 是否会真的收到提醒：取决于 days_until 是否落在 reminder_days 窗口内。
     will_trigger: bool
+    #: 明天就是生日 —— 今晚有一趟"生日前夜"提醒（见 scheduler 的 23:55）。
+    eve_reminder: bool
     #: 由阳历推导的农历生日（存储格式），界面以它为准。
     lunar_from_solar: Optional[str] = None
     #: 农历的中文表示，如"腊月廿四"。
@@ -404,6 +406,7 @@ def build_recipient_view(
             "age": None,
             "week_name": None,
             "will_trigger": False,
+            "eve_reminder": False,
             "lunar_from_solar": derived_lunar,
             "lunar_text": lunar_text,
             "lunar_next_solar": None,
@@ -464,7 +467,10 @@ def build_recipient_view(
         next_birthday=next_birthday,
         age=hit["age"],
         week_name=_WEEKDAYS[next_birthday.weekday()],
-        will_trigger=days_until <= reminder_days,
+        # 生日**当天**不再提醒（那时祝福应该已经送到了）：
+        # days_until == 0 不算会触发，窗口是 1..reminder_days。
+        will_trigger=1 <= days_until <= reminder_days,
+        eve_reminder=days_until == 1,
         lunar_next_solar=lunar_next,
         next_solar_birthday=next_solar_birthday,
     )

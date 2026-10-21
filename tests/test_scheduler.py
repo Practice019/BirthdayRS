@@ -99,12 +99,13 @@ async def test_scheduler_runs_job_once_then_skips(tmp_path: Path):
     """到点执行一次；同一天再轮询不会重复执行。"""
     calls = []
 
-    def job():
-        calls.append(datetime.now())
+    def job(slot="morning"):
+        calls.append(slot)
         return 1
 
     sched = DailyScheduler(
-        job, log_dir=tmp_path, hour=0, minute=0, poll_interval=0.01
+        job, log_dir=tmp_path, hour=0, minute=0,
+        eve_hour=None, eve_minute=None, poll_interval=0.01,
     )
     sched.start()
     await asyncio.sleep(0.15)   # 轮询若干次
@@ -122,17 +123,20 @@ async def test_scheduler_survives_job_exception(tmp_path: Path):
     """
     attempts = []
 
-    def boom():
-        attempts.append(1)
+    def boom(slot="morning"):
+        attempts.append(slot)
         raise RuntimeError("发送失败")
 
-    sched = DailyScheduler(boom, log_dir=tmp_path, hour=0, minute=0, poll_interval=0.01)
+    sched = DailyScheduler(
+        boom, log_dir=tmp_path, hour=0, minute=0,
+        eve_hour=None, eve_minute=None, poll_interval=0.01,
+    )
     sched.start()
     await asyncio.sleep(0.1)
     running = sched._task is not None and not sched._task.done()
     await sched.stop()
 
-    assert attempts == [1], "标记已写，同一天不该重试"
+    assert attempts == ["morning"], "标记已写，同一天不该重试"
     assert running, "异常后定时器必须仍然活着"
 
 
@@ -141,10 +145,12 @@ async def test_scheduler_not_yet_time_does_nothing(tmp_path: Path):
     """没到点不执行。"""
     calls = []
     sched = DailyScheduler(
-        lambda: calls.append(1) or 0,
+        lambda slot="morning": calls.append(1) or 0,
         log_dir=tmp_path,
         hour=23,
         minute=59,
+        eve_hour=None,
+        eve_minute=None,
         poll_interval=0.01,
     )
     # 直接验证判定：把 job 换成一个不受时间影响的最小循环太绕，
@@ -157,7 +163,10 @@ async def test_scheduler_not_yet_time_does_nothing(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_scheduler_stop_is_idempotent(tmp_path: Path):
-    sched = DailyScheduler(lambda: 0, log_dir=tmp_path, hour=0, minute=0, poll_interval=1)
+    sched = DailyScheduler(
+        lambda slot="morning": 0, log_dir=tmp_path, hour=0, minute=0,
+        eve_hour=None, eve_minute=None, poll_interval=1,
+    )
     await sched.stop()          # 没启动就停，不该抛
     sched.start()
     await sched.stop()
@@ -205,3 +214,77 @@ def test_run_returns_count(tmp_path):
 
     sig = inspect.signature(BirthdayReminder.run)
     assert sig.return_annotation is int
+
+
+# ---------- 两趟：早上 + 生日前夜 ----------
+
+
+def test_two_slots_by_default(tmp_path):
+    """默认有早上与前夜两趟，各自独立的标记文件。
+
+    共用一个标记的话，早上发过之后前夜那趟就会被判"今天发过了"而跳过 ——
+    那正是这一趟要补的东西。
+    """
+    sched = DailyScheduler(lambda slot="m": 0, log_dir=tmp_path, hour=9, minute=0)
+    names = [s[0] for s in sched.slots]
+    assert names == ["morning", "eve"]
+    assert sched.marker_for("morning") != sched.marker_for("eve")
+
+
+def test_eve_can_be_disabled(tmp_path):
+    sched = DailyScheduler(
+        lambda slot="m": 0, log_dir=tmp_path, hour=9, minute=0,
+        eve_hour=None, eve_minute=None,
+    )
+    assert [s[0] for s in sched.slots] == ["morning"]
+
+
+@pytest.mark.asyncio
+async def test_both_slots_run_independently(tmp_path):
+    """两趟都到点时都要跑，且各自只跑一次。"""
+    seen = []
+
+    def job(slot="morning"):
+        seen.append(slot)
+        return 1
+
+    sched = DailyScheduler(
+        job, log_dir=tmp_path, hour=0, minute=0, eve_hour=0, eve_minute=0,
+        poll_interval=0.01,
+    )
+    sched.start()
+    await asyncio.sleep(0.15)
+    await sched.stop()
+
+    assert sorted(seen) == ["eve", "morning"], f"两趟都该跑，实际 {seen}"
+
+
+@pytest.mark.asyncio
+async def test_morning_does_not_block_eve(tmp_path):
+    """早上 9:00 发过之后，23:55 的前夜提醒仍要发。"""
+    seen = []
+
+    def job(slot="morning"):
+        seen.append(slot)
+        return 1
+
+    # 早上已到点，前夜也设成已到点（当前时刻一定过 00:00）
+    sched = DailyScheduler(
+        job, log_dir=tmp_path, hour=0, minute=0, eve_hour=0, eve_minute=1,
+        poll_interval=0.01,
+    )
+    sched.start()
+    await asyncio.sleep(0.15)
+    await sched.stop()
+    assert "eve" in seen, "前夜那趟被早上的标记挡住了"
+
+
+def test_run_accepts_only_eve():
+    """run(only_eve=True) 只发"明天生日"的人 —— 接线要通。"""
+    import inspect
+
+    from src.main import BirthdayReminder
+
+    sig = inspect.signature(BirthdayReminder.run)
+    assert "only_eve" in sig.parameters
+    assert sig.parameters["only_eve"].default is False
