@@ -194,7 +194,7 @@
         '只有农历生日（旧格式）。编辑这条补上阳历生日后会自动换算'));
     } else if (r.solar_invalid) {
       tdBirth.appendChild(el('span', 'mono', r.solar_birthday || '未填'));
-      tdBirth.appendChild(el('span', 'sub sub--warn', '身份证出生年月日不合理，请修正'));
+      tdBirth.appendChild(el('span', 'sub sub--warn', '公历生日不正确，请修正'));
     } else {
       tdBirth.appendChild(el('span', 'mono', r.solar_birthday || ''));
       if (r.lunar_text) {
@@ -411,9 +411,9 @@
         note.appendChild(el('strong', null, data.next_solar_birthday));
       }
     } else if (state === 'bad') {
-      note.textContent = (data && data.error) || '身份证出生年月日不合理，请检查格式和日期。';
+      note.textContent = (data && data.error) || '公历生日不正确，请填 8 位数字或 4 位月日。';
     } else {
-      note.textContent = '填好身份证出生年月日后，这里会显示下次农历生日与下次阳历生日。';
+      note.textContent = '填好公历生日后，这里会显示下次农历生日与下次阳历生日。';
     }
 
     var status = $('#solar-status');

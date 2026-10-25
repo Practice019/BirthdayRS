@@ -184,7 +184,7 @@ class RecipientView:
     def status_text(self) -> str:
         """面向使用者的状态描述（不暴露 days_until 之类的内部概念）。"""
         if self.solar_invalid:
-            return "身份证出生年月日不合理"
+            return "公历生日不正确"
         if self.days_until is None:
             return "日期无法识别"
         if self.days_until == 0:

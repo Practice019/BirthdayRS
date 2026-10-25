@@ -1128,7 +1128,7 @@ async def test_api_lunar_rejects_invalid_calendar_date(client):
         data = resp.json()
         assert data["ok"] is False, f"{bad} 不应返回农历"
         assert data["display"] is None
-        assert "不合理" in data["hint"]
+        assert "不正确" in data["hint"]
 
 
 async def test_api_lunar_handles_bad_input(client):
@@ -1317,7 +1317,7 @@ def test_invalid_solar_date_produces_no_lunar():
     assert view.lunar_from_solar is None
     assert view.lunar_next_solar is None
     assert view.days_until is None, "非法阳历不得显示倒计时"
-    assert view.status_text == "身份证出生年月日不合理"
+    assert view.status_text == "公历生日不正确"
 
 
 def test_lunar_conversion_rejects_invalid_dates():
@@ -1342,7 +1342,7 @@ def test_validate_solar_date_messages():
     assert ok is False and msg == ""
 
     ok, msg = validate_solar_date("1990-01-32")
-    assert ok is False and "不合理" in msg
+    assert ok is False and "不正确" in msg
 
     ok, msg = validate_solar_date("1990-01-20")
     assert ok is True
@@ -2592,3 +2592,51 @@ def test_build_sendable_recipient_keeps_audience():
         {"name": "旧C", "solar_birthday": "1990-01-01"}, "me@example.com"
     )
     assert legacy.audience == "self"
+
+
+async def test_api_lunar_accepts_month_day_only(client):
+    """回归：只有月日（如 1212）必须判为**有效**。
+
+    曾经 /api/lunar 只认完整日期，于是 1212 这种完全正常的输入被前端
+    标红为"不合理"，而提交时后端其实是接受的 —— 前后端判定不一致，
+    使用者会以为自己填错了。
+    """
+    resp = await client.get("/api/lunar", params={"solar": "1212"})
+    assert resp.status_code == 200
+    data = resp.json()
+
+    assert data["ok"] is True, "1212 是合法输入"
+    assert data.get("month_day_only") is True
+    # 无年推不出农历，但下次阳历生日要给出来
+    assert data["display"] is None
+    assert data["next_solar_birthday"] == "2026-12-12"
+
+
+async def test_api_lunar_month_day_rejects_impossible(client):
+    """只有月日时也要拒绝不存在的日期（0230、1332）。"""
+    for bad in ["0230", "1332", "0000"]:
+        resp = await client.get("/api/lunar", params={"solar": bad})
+        data = resp.json()
+        assert data["ok"] is False, f"{bad} 不该判为有效"
+
+
+async def test_create_redirects_back_to_add_page(client, config_file):
+    """添加成功后**留在添加页**并清空表单。
+
+    录入名单往往是一次连着填好几个人，每填一个就被弹回时间轴、
+    还要再点一次"添加收件人"，很打断。
+    """
+    resp = await client.post(
+        "/recipients",
+        data={"name": "新人", "solar_birthday": "1212", "reminder_days": "3"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    location = unquote(resp.headers["location"])
+    assert location.startswith("/recipients/new"), f"应留在添加页，实际 {location}"
+    assert "已添加" in location and "新人" in location
+
+    # 跟着跳过去，表单应是空的（方便接着填下一个）
+    page = await client.get(location)
+    assert page.status_code == 200
+    assert 'id="name"' in page.text

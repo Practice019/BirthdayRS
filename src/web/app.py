@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -48,6 +48,7 @@ from src.web.lunar import (
     solar_to_lunar,
     to_lunar_display_from_solar,
     validate_solar_date,
+    parse_month_day,
 )
 from src.web.repository import (
     ConfigNotFoundError,
@@ -635,7 +636,13 @@ def create_app(
                 status_code=500,
             )
 
-        return RedirectResponse(f"/?notice=已添加 {payload.name}", status_code=303)
+        # 添加后**留在添加页**并清空表单：录入名单往往是一次连着填好几个人，
+        # 每填一个就被弹回时间轴、还要再点一次"添加收件人"，很打断。
+        # 已添加的人名放进 notice，让人确认这次确实存进去了。
+        # PRG 模式：重定向到 GET，避免刷新时重复提交。
+        return RedirectResponse(
+            f"/recipients/new?notice=已添加 {payload.name}", status_code=303
+        )
 
     @app.get("/recipients/{index}/edit", response_class=HTMLResponse)
     async def edit_recipient(request: Request, index: int) -> HTMLResponse:
@@ -683,7 +690,25 @@ def create_app(
 
         stored_input = normalize_solar_input(raw)
         parsed = parse_iso_date(stored_input)
+
         if parsed is None:
+            # 不是完整日期 —— 再看是不是"只有月日"（如 1212）。
+            # 这种写法是合法的，只是**推不出农历**（农历与公历的对应逐年漂移），
+            # 所以要回 ok=True 但它没有农历可显示。曾经这里直接判"不合理"，
+            # 于是 1212 这种完全正常的输入被标红。
+            month_day = parse_month_day(raw)
+            if month_day is not None:
+                nxt = next_solar_occurrence(date(2000, month_day[0], month_day[1]))
+                return {
+                    "ok": True,
+                    "display": None,
+                    "stored": None,
+                    "solar": f"{month_day[0]:02d}{month_day[1]:02d}",
+                    "next_solar": None,
+                    "next_solar_birthday": nxt.isoformat() if nxt else None,
+                    "month_day_only": True,
+                    "hint": "只有月日，不换算农历",
+                }
             return {
                 "ok": False,
                 "display": None,

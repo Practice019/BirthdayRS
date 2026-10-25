@@ -239,7 +239,7 @@
                min="0" max="365"
                value="{{ values.default_reminder_days if values.default_reminder_days is not none else 3 }}"
                {% if errors.default_reminder_days %}aria-describedby="days-err" aria-invalid="true"{% endif %}>
-        <p class="field__hint">收件人没单独设置时用它。0 表示只在生日当天提醒。</p>
+        <p class="field__hint">收件人没单独设置时用它。从生日前这么多天开始每天提醒一次；<strong>生日当天不发</strong>，所以填 0 等于关掉提醒。</p>
         {% if errors.default_reminder_days %}
           <p class="field__err" id="days-err">{{ errors.default_reminder_days }}</p>
         {% endif %}

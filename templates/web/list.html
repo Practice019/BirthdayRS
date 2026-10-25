@@ -122,7 +122,7 @@
                 </span>
               {% elif not r.solar_valid %}
                 <span class="mono">{{ r.solar_birthday or '未填' }}</span>
-                <span class="sub sub--warn">身份证出生年月日不合理，请修正</span>
+                <span class="sub sub--warn">公历生日不正确，请修正</span>
               {% else %}
                 <span class="mono">{{ r.solar_birthday }}</span>
                 {% if r.lunar_text %}

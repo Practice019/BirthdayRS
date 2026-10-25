@@ -51,7 +51,7 @@ document.querySelectorAll('form.js-test-send').forEach(function (form) {
     return;
   }
 
-  var placeholder = '填好身份证出生年月日后，这里会显示下次农历生日与下次阳历生日。';
+  var placeholder = '填好公历生日后，这里会显示下次农历生日与下次阳历生日。';
 
   var timer = null;
   var lastQuery = null;
@@ -120,7 +120,18 @@ document.querySelectorAll('form.js-test-send').forEach(function (form) {
         if (input.value.trim() !== value) {
           return;
         }
-        if (data.ok) {
+        if (data.ok && data.month_day_only) {
+          // 只有月日：合法，但算不出农历（农历与公历的对应逐年漂移）。
+          // 只报阳历生日的下一次，不假装有农历。
+          setStatus('ok', '只有月日');
+          output.setAttribute('data-state', 'ok');
+          var only = [{ text: '只有月日，不换算农历。' }];
+          if (data.next_solar_birthday) {
+            only.push({ text: '　下次阳历生日：' });
+            only.push({ text: data.next_solar_birthday, strong: true });
+          }
+          renderNote(only);
+        } else if (data.ok) {
           setStatus('ok', '有效');
           output.setAttribute('data-state', 'ok');
           // 两个不同的日期：农历生日落在阳历哪天，以及阳历生日的下一次
@@ -135,7 +146,7 @@ document.querySelectorAll('form.js-test-send').forEach(function (form) {
           renderNote(parts);
         } else {
           // 阳历不合理时：不显示农历，只在这里说明问题。
-          var hint = data.hint || '身份证出生年月日不合理，请检查格式和日期';
+          var hint = data.hint || '公历生日不正确，请填 8 位数字或 4 位月日';
           setStatus('bad', '不合理');
           output.setAttribute('data-state', 'bad');
           renderNote([{ text: hint }]);

@@ -39,8 +39,8 @@ _YEAR_WINDOW = 1
 _YEAR_WORDS = {0: "今年", 1: "明年", 2: "后年"}
 
 #: 阳历日期不合理时的统一提示。
-#: 措辞与表单标签保持一致（都用"身份证出生年月日"），避免标签与报错对不上号。
-INVALID_SOLAR_HINT = "身份证出生年月日不合理，请检查格式和日期"
+#: 措辞与表单标签保持一致（都用"公历生日"），避免标签与报错对不上号。
+INVALID_SOLAR_HINT = "公历生日不正确，请填 8 位数字（如 19900120）或 4 位月日（如 0606）"
 
 
 def relative_year_label(target: datetime.date, today: Optional[datetime.date] = None) -> str:

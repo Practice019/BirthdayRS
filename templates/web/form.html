@@ -75,10 +75,10 @@
             </span>
           {% endif %}
         {% elif values.solar_state == 'bad' %}
-          身份证出生年月日不合理，请检查格式和日期。
+          公历生日不正确，请填 8 位数字（如 19900120）或 4 位月日（如 0606）。
         {% else %}
           <span class="lunar-note__placeholder">
-            填好身份证出生年月日后，这里会显示下次农历生日与下次阳历生日。
+            填好公历生日后，这里会显示下次农历生日与下次阳历生日。
           </span>
         {% endif %}
       </p>
@@ -108,7 +108,7 @@
              value="{{ values.reminder_days if values.reminder_days is not none else '' }}"
              {% if errors.reminder_days %}aria-describedby="days-err" aria-invalid="true"{% endif %}>
       <p class="field__hint">
-        留空就用设置里的默认值（当前 {{ default_reminder_days }} 天）；填 0 表示只在生日当天提醒。
+        留空就用设置里的默认值（当前 {{ default_reminder_days }} 天）。从生日前这么多天开始，每天提醒一次，<strong>生日当天不再提醒</strong>。
       </p>
       {% if errors.reminder_days %}
         <p class="field__err" id="days-err">{{ errors.reminder_days }}</p>
