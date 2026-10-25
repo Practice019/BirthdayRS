@@ -28,6 +28,7 @@ from src.core.notification_factory import NotificationFactory
 from src.notification.sender_wxpusher import clear_followers_cache
 from src.web.auth import TokenAuthMiddleware
 from src.web.domain import (
+    build_heatmap,
     build_sendable_recipient,
     build_timeline,
     next_solar_occurrence,
@@ -381,6 +382,9 @@ def create_app(
 
         summary = repo.get_notification_summary()
         timeline = build_timeline(recipients, summary.get("default_reminder_days") or 0)
+        # 未来 365 天的分布，给"一天一小格"的图用。复用 timeline 的结果，
+        # 不重新算日期 —— 否则两套算法迟早会分叉。
+        heatmap = build_heatmap(timeline, datetime.now().date())
 
         return templates.TemplateResponse(
             request,
@@ -388,6 +392,7 @@ def create_app(
             page_context(
                 request,
                 timeline=timeline,
+                heatmap=heatmap,
                 summary=summary,
                 total=len(timeline),
                 trigger_count=sum(1 for v in timeline if v.will_trigger),

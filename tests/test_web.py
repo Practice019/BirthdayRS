@@ -2640,3 +2640,201 @@ async def test_create_redirects_back_to_add_page(client, config_file):
     page = await client.get(location)
     assert page.status_code == 200
     assert 'id="name"' in page.text
+
+
+# ---------- 未来一年热力图 ----------
+
+
+def _heatmap(raw, today, reminder_days=3, days=365):
+    from src.web.domain import build_heatmap, build_timeline
+
+    views = build_timeline(raw, reminder_days, today=datetime.combine(today, datetime.min.time()))
+    return build_heatmap(views, today, days=days)
+
+
+def test_heatmap_shape_is_full_year():
+    """365 天要正好铺满 53 列 × 7 行，多一格少一格都会让整张图错位。"""
+    from datetime import date
+
+    hm = _heatmap([], date(2026, 10, 26))
+
+    assert len(hm["weeks"]) == 53
+    assert all(len(week) == 7 for week in hm["weeks"])
+    assert hm["days"] == 365
+
+    # 第一天是本周周一，最后一天之后只能是占位空格
+    filled = [c for week in hm["weeks"] for c in week if not c["empty"]]
+    assert len(filled) == 365
+    assert filled[0]["date"] == "2026-10-26"
+    assert filled[-1]["date"] == "2027-10-25"
+
+
+def test_heatmap_today_is_marked_and_placed():
+    """今天的格子必须存在且带 is_today —— 它是整张图的锚点。"""
+    from datetime import date
+
+    hm = _heatmap([], date(2026, 10, 26))
+    todays = [c for week in hm["weeks"] for c in week if c.get("is_today")]
+
+    assert len(todays) == 1, "有且只有一个今天"
+    assert todays[0]["date"] == "2026-10-26"
+    assert todays[0]["count"] == 0
+
+
+def test_heatmap_places_solar_and_lunar_separately():
+    """一个人两个生日 = 两个格子。
+
+    只有月日的记录（如 1212）推不出农历，只能落一格；带完整年份的
+    记录要同时出现在阳历格和农历格上。
+    """
+    from datetime import date
+
+    raw = [
+        {"name": "只月日", "solar_birthday": "1212", "reminder_days": 3},
+        {"name": "全日期", "solar_birthday": "1990-01-20", "reminder_days": 3},
+    ]
+    hm = _heatmap(raw, date(2026, 10, 26))
+    flats = [c for week in hm["weeks"] for c in week if c["count"]]
+
+    by_name = {}
+    for cell in flats:
+        for who in cell["people"]:
+            by_name.setdefault(who["name"], []).append((cell["date"], who["kind"]))
+
+    assert by_name["只月日"] == [("2026-12-12", "阳历")]
+    kinds = sorted(kind for _, kind in by_name["全日期"])
+    assert kinds == ["农历", "阳历"], "双历记录要落在两个格子上"
+    assert len({d for d, _ in by_name["全日期"]}) == 2
+
+
+def test_heatmap_marks_reminder_window():
+    """格子里要能看出这条生日会不会真的发提醒（取决于 reminder_days）。"""
+    from datetime import date
+
+    # 这里刻意不写 per-recipient 的 reminder_days —— 逐人设置会盖掉
+    # _heatmap 传进来的全局窗口，测的就不是窗口本身了。
+    raw = [
+        {"name": "近", "solar_birthday": "11-03"},
+        {"name": "远", "solar_birthday": "11-30"},
+    ]
+    hm = _heatmap(raw, date(2026, 10, 26))
+    msgs = {}
+    for week in hm["weeks"]:
+        for cell in week:
+            for who in cell["people"]:
+                msgs[who["name"]] = (who["days_until"], who["will_trigger"])
+
+    assert msgs["近"] == (8, False), "8 天后超出 3 天窗口"
+    assert msgs["远"] == (35, False)
+
+    # 把窗口放大到 10 天，「近」就该进窗口
+    hm2 = _heatmap(raw, date(2026, 10, 26), reminder_days=10)
+    flags = {
+        who["name"]: who["will_trigger"]
+        for week in hm2["weeks"]
+        for cell in week
+        for who in cell["people"]
+    }
+    assert flags["近"] is True
+    assert flags["远"] is False
+
+
+def test_heatmap_tip_mentions_date_and_who():
+    """悬浮提示是唯一的信息来源，日期、天数、姓名、提醒状态都得在。"""
+    from datetime import date
+
+    raw = [{"name": "张三", "solar_birthday": "1990-11-02", "reminder_days": 3}]
+    hm = _heatmap(raw, date(2026, 10, 26))
+    cells = [
+        c
+        for week in hm["weeks"]
+        for c in week
+        if c["count"] and c["date"] == "2026-11-02"
+    ]
+
+    assert len(cells) == 1
+    tip = cells[0]["tip"]
+    assert "11月2日" in tip and "周一" in tip
+    assert "还有 7 天" in tip
+    assert "张三" in tip and "阳历生日" in tip
+    assert "满 36 岁" in tip
+
+    # 无人生日的格子也要有提示，不能是空白浮层
+    empty = [c for week in hm["weeks"] for c in week if not c["empty"] and not c["count"]]
+    assert "无人生日" in empty[0]["tip"]
+
+
+def test_heatmap_levels_scale_with_count():
+    """同一天两个人生日要显示得更"热"，否则图上看不出忙的那天。"""
+    from datetime import date
+
+    raw = [
+        {"name": "甲", "solar_birthday": "11-02", "reminder_days": 3},
+        {"name": "乙", "solar_birthday": "11-02", "reminder_days": 3},
+        {"name": "丙", "solar_birthday": "11-20", "reminder_days": 3},
+    ]
+    hm = _heatmap(raw, date(2026, 10, 26))
+    levels = {
+        c["date"]: c["level"] for week in hm["weeks"] for c in week if c["count"]
+    }
+
+    assert levels["2026-11-02"] == 2
+    assert levels["2026-11-20"] == 1
+    assert hm["max"] == 2
+
+
+def test_heatmap_birthday_outside_year_is_skipped():
+    """正好 365 天外的生日不进图（窗口闭合），否则 total 会虚高。"""
+    from datetime import date
+
+    # 2026-10-26 + 365 天 = 2027-10-26，正好在 horizon 之外
+    raw = [{"name": "边界", "solar_birthday": "10-26", "reminder_days": 3}]
+    hm = _heatmap(raw, date(2026, 10, 26))
+
+    dates = [c["date"] for week in hm["weeks"] for c in week if c["count"]]
+    assert "2026-10-26" in dates, "当天的生日要算进去"
+    assert "2027-10-26" not in dates, "第 366 天不该出现"
+
+
+def test_heatmap_month_labels_do_not_collide():
+    """月份标签落在各自列上，相邻标签不能挤在同一列。"""
+    from datetime import date
+
+    hm = _heatmap([], date(2026, 10, 26))
+    months = hm["months"]
+
+    assert months, "至少要有一个月份标签"
+    cols = [m["col"] for m in months]
+    assert cols == sorted(cols)
+    assert len(set(cols)) == len(cols), "标签列不能重复"
+    assert all(b - a >= 2 for a, b in zip(cols, cols[1:])), "太挤的标签要合并掉"
+
+
+def test_heatmap_labels_repeat_month_across_years():
+    """回归：跨年的 365 天里 10 月出现两次，标签不能只标前一个。
+
+    去重键曾经是「月」而不是「年-月」，于是 2027 年 10 月被当成 2026 年
+    10 月的重复，图末尾那一整段（约 5 列）一个标签都没有。
+    """
+    from datetime import date
+
+    hm = _heatmap([], date(2026, 10, 26))
+    labels = [m["label"] for m in hm["months"]]
+
+    assert labels.count("10月") == 1, "同一段只该有一个 10 月标签"
+    assert labels[-1] == "10月", "末尾那一段是 2027 年 10 月，必须标出来"
+    assert hm["months"][-1]["col"] >= 44, "末尾标签要落在最后几列"
+
+
+async def test_timeline_page_renders_heatmap(client):
+    """页面里要真的有这张图，且浮层文案已经渲染进 DOM。"""
+    resp = await client.get("/")
+    assert resp.status_code == 200
+
+    html = resp.text
+    assert "heatmap__grid" in html
+    assert "未来一年" in html
+    assert '<span class="hm-cell hm-cell--void"' in html
+    assert 'role="listitem"' in html
+    # 浮层靠 data-tip，不能只留 title（否则原生 tooltip 会和自绘浮层打架）
+    assert "data-tip=" in html

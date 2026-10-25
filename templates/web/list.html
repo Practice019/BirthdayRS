@@ -26,6 +26,61 @@
     </p>
   </div>
 
+  {# 未来 365 天的生日分布，GitHub 贡献图那种：一天一小格。
+     用 <details> 折叠，默认收起 —— 日常看名单不需要它占一屏。
+     悬浮提示读 data-tip，由 app.js 渲染成挂在 body 上的浮层。
+     不用 title：格子在 overflow-x 容器里，CSS 浮层会被裁角；
+     而 title 一旦保留，原生提示会和自绘浮层同时冒出来。
+     aria-label 让读屏用户也能逐格读到内容。 #}
+  <details class="heatmap">
+    <summary class="heatmap__summary">
+      未来一年 ·
+      <strong>{{ heatmap.total }}</strong> 个生日
+      {%- if heatmap.max > 1 %} · 单日最多 {{ heatmap.max }} 个{% endif %}
+      <span class="heatmap__hint">（点开看分布）</span>
+    </summary>
+
+    <div class="heatmap__scroll">
+      <div class="heatmap__body">
+        {# 月份标签：按列定位，与下面的格子对齐 #}
+        <div class="heatmap__months" aria-hidden="true">
+          {% for m in heatmap.months %}
+            <span class="heatmap__month" style="grid-column: {{ m.col + 1 }}">{{ m.label }}</span>
+          {% endfor %}
+        </div>
+
+        {# 用 list 而不是 grid：grid 角色等于向读屏软件承诺键盘导航
+           （方向键移动、roving tabindex），我们没做，就不该声明。 #}
+        <div class="heatmap__grid" role="list" aria-label="未来一年每天的生日分布">
+          {% for week in heatmap.weeks %}
+            {% for cell in week %}
+              {% if cell.empty %}
+                <span class="hm-cell hm-cell--void" aria-hidden="true"></span>
+              {% else %}
+                {# tip 由后端拼好（见 domain._cell_tip）—— 含日期、星期、
+                   还有几天、谁过生日、阳历还是农历、会不会真的发提醒。 #}
+                {# 不用 title：原生 tooltip 会和自绘浮层同时冒出来。 #}
+                <span class="hm-cell hm-cell--l{{ cell.level }}{% if cell.is_today %} hm-cell--today{% endif %}"
+                      role="listitem"
+                      data-tip="{{ cell.tip }}"
+                      aria-label="{{ cell.tip }}"></span>
+              {% endif %}
+            {% endfor %}
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <div class="heatmap__legend" aria-hidden="true">
+      <span>少</span>
+      <span class="hm-cell hm-cell--l0"></span>
+      <span class="hm-cell hm-cell--l1"></span>
+      <span class="hm-cell hm-cell--l2"></span>
+      <span class="hm-cell hm-cell--l3"></span>
+      <span>多</span>
+    </div>
+  </details>
+
   <section class="meta" aria-label="通知配置">
     <span class="meta__label">通知渠道</span>
     {% for t in summary.types %}

@@ -396,3 +396,69 @@ document.querySelectorAll('form.js-test-send').forEach(function (form) {
     init();
   }
 })();
+
+/* 热力图的悬浮浮层。
+   放在 body 上而不是格子内部：格子在 .heatmap__scroll（overflow-x: auto）
+   里，绝对定位的浮层会被裁成缺角。这里按格子的视口坐标摆放，
+   并做左右/上下翻转，保证贴边时也完整可见。 */
+(function () {
+  var tip = null;
+
+  function ensureTip() {
+    if (tip && document.body.contains(tip)) { return tip; }
+    tip = document.createElement('div');
+    tip.className = 'hm-tip';
+    tip.setAttribute('role', 'tooltip');
+    document.body.appendChild(tip);
+    return tip;
+  }
+
+  function place(cell) {
+    var el = ensureTip();
+    el.textContent = cell.getAttribute('data-tip') || '';
+    el.removeAttribute('data-show');
+    // 先显示再量尺寸，否则拿到的是 0
+    el.setAttribute('data-show', '');
+    var box = el.getBoundingClientRect();
+    var rect = cell.getBoundingClientRect();
+    var pad = 8;
+
+    var top = rect.top - box.height - pad;
+    if (top < pad) { top = rect.bottom + pad; }  // 上面放不下就翻到下面
+
+    var left = rect.left + rect.width / 2 - box.width / 2;
+    var maxLeft = window.innerWidth - box.width - pad;
+    if (left > maxLeft) { left = maxLeft; }
+    if (left < pad) { left = pad; }
+
+    el.style.top = Math.round(top) + 'px';
+    el.style.left = Math.round(left) + 'px';
+  }
+
+  function hide() {
+    if (tip) { tip.removeAttribute('data-show'); }
+  }
+
+  function init() {
+    var grid = document.querySelector('.heatmap__grid');
+    if (!grid) { return; }
+    grid.addEventListener('mouseover', function (ev) {
+      var cell = ev.target.closest('.hm-cell[data-tip]');
+      if (cell) { place(cell); }
+    });
+    grid.addEventListener('mouseout', function (ev) {
+      if (ev.target.closest('.hm-cell[data-tip]')) { hide(); }
+    });
+    // 格子被滚走/详情收起时浮层不能留在原地
+    document.addEventListener('scroll', hide, true);
+    window.addEventListener('resize', hide);
+    var details = document.querySelector('.heatmap');
+    if (details) { details.addEventListener('toggle', hide); }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();

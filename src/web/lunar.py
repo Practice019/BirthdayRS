@@ -300,11 +300,19 @@ def next_solar_for_lunar(
 
     匹配口径与 ``BirthdayChecker`` 一致：只看月、日，年份不参与。
     """
+    # 支持两种写法：完整 ``2026-12-24``、只有月日 ``1224``。
+    # 后者是"不填出生年"功能引入的写法，农历反查本来就不需要年份 ——
+    # 曾经这里只认完整日期，于是"只填农历月日"的记录拿不到下一次日期，
+    # 在热力图与时间轴上直接消失。
     parsed = parse_iso_date(lunar_str)
-    if parsed is None:
-        return None
+    if parsed is not None:
+        month, day = parsed.month, parsed.day
+    else:
+        month_day = parse_month_day(lunar_str)
+        if month_day is None:
+            return None
+        month, day = month_day
 
-    month, day = parsed.month, parsed.day
     start = today or datetime.date.today()
 
     # 农历年与阳历年可能差 1（春节前后），前后各试一年已足够覆盖。

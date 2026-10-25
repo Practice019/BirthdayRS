@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from lunar_python import Solar
@@ -457,7 +457,12 @@ def build_recipient_view(
     # 两个不同的"阳历日期"，必须分别算：
     #   lunar_next_solar    = 农历生日落在阳历哪天（农历月日反查）
     #   next_solar_birthday = 阳历生日（身份证月/日）的下一次
-    lunar_next = next_solar_for_lunar(derived_lunar, today) if derived_lunar else None
+    #
+    # 农历来源**不能只用 derived_lunar**：它是由阳历推导出来的，而
+    # "只填农历、没有阳历"的记录（有些人只过农历生日）永远推不出。
+    # 优先级与 build_sendable_recipient 一致：手填的农历优先，没填才用推导值。
+    lunar_source = configured_lunar or derived_lunar
+    lunar_next = next_solar_for_lunar(lunar_source, today) if lunar_source else None
     next_solar_birthday = (
         _next_solar_occurrence(solar_date, today) if solar_date else None
     )
@@ -687,3 +692,164 @@ async def send_reminder_now(
             logger.warning("测试发送失败 channel=%s: %s", name, exc)
             results.append({"channel": name, "ok": False, "detail": str(exc)})
     return results
+
+
+def _cell_tip(day: date, people: List[Dict[str, Any]], today: date) -> str:
+    """一个格子的悬浮提示文案。
+
+    在 Python 里拼而不是在模板里拼：模板里做字符串拼接既难读也容易
+    漏掉分隔符，而这段文字是使用者唯一能看到的信息来源，必须完整。
+
+    形如：
+        11月2日（周日）· 还有 7 天
+        · 张三 阳历生日 · 满 18 岁 · 会发提醒
+    """
+    weekday = _WEEKDAYS[day.weekday()]
+    header = f"{day.month}月{day.day}日（周{weekday}）"
+    if not people:
+        return f"{header} · 无人生日"
+
+    lines = [f"{header} · 还有 {people[0]['days_until']} 天"]
+    for who in people:
+        bits = [f"{who['name']} {who['kind']}生日"]
+        if who.get("age"):
+            bits.append(f"满 {who['age']} 岁")
+        bits.append("会发提醒" if who.get("will_trigger") else "不在提醒窗口")
+        lines.append("· " + " · ".join(bits))
+    return "\n".join(lines)
+
+
+def build_heatmap(
+    views: List["RecipientView"],
+    today: date,
+    days: int = 365,
+) -> Dict[str, Any]:
+    """未来 ``days`` 天的生日分布，供 GitHub 那种"一天一小格"的图。
+
+    每格对应一天，格子的深浅表示当天过生日的人数（0 / 1 / 2+）。
+    **一个生日算两条**：阳历那天的和农历那天的（很多人两个都过），
+    所以同一个人可能出现在两个不同的格子里 —— 这是真实情况，不是重复。
+
+    返回结构：
+
+        {
+          "days": 365,            # 总天数
+          "total": 18,            # 落在窗口内的生日条目总数
+          "max": 2,               # 单日最多几条（决定配色分级）
+          "weeks": [[cell, ...7], ...]   # 每行一周，列=周一..周日
+          "months": [{"label": "11月", "col": 5}, ...]   # 月份标签落在第几列
+        }
+
+    单个 ``cell``：
+
+        {"date": "2026-11-02", "iso": "2026-11-02", "count": 1,
+         "people": [{"name": "小孩哥", "kind": "农历", "days_until": 7,
+                     "will_trigger": False, "age": 18}],
+         "level": 1, "weekday": 0, "is_today": False}
+
+    ``level`` 是 0–3 的配色档位，模板直接拿它拼 class，不用在模板里算数。
+    """
+    today = today if isinstance(today, date) else today.date()
+    horizon = today + timedelta(days=days - 1)
+
+    by_date: Dict[date, List[Dict[str, Any]]] = {}
+
+    def add(day: date, name: str, kind: str, age: Any, will_trigger: bool) -> None:
+        if not (today <= day <= horizon):
+            return
+        by_date.setdefault(day, []).append(
+            {
+                "name": name,
+                "kind": kind,
+                "days_until": (day - today).days,
+                "age": age,
+                "will_trigger": will_trigger,
+            }
+        )
+
+    for v in views:
+        # 阳历生日：下一年的同月日
+        if v.next_solar_birthday is not None:
+            add(
+                v.next_solar_birthday,
+                v.name,
+                "阳历",
+                v.age,
+                v.will_trigger,
+            )
+        # 农历生日：下一次对应的阳历日期。两者可能落在同一天，
+        # 那就两条都记 —— 那天确实是"双历同日"，值得区分。
+        if v.lunar_next_solar is not None and v.lunar_next_solar != v.next_solar_birthday:
+            add(
+                v.lunar_next_solar,
+                v.name,
+                "农历",
+                v.age,
+                v.will_trigger,
+            )
+        elif v.lunar_next_solar is not None and v.next_solar_birthday is None:
+            # 只过农历（没有阳历）的记录，农历那天的条目用"农历"标注
+            add(v.lunar_next_solar, v.name, "农历", v.age, v.will_trigger)
+
+    # 按周分组：每行从周一开始，与 GitHub 一致
+    start = today - timedelta(days=today.weekday())
+    weeks: List[List[Dict[str, Any]]] = []
+    total = 0
+    max_count = 0
+
+    for week_start in range(0, days + today.weekday(), 7):
+        row: List[Dict[str, Any]] = []
+        for offset in range(7):
+            day = start + timedelta(days=week_start + offset)
+            if not (today <= day <= horizon):
+                # 窗口外的格子留空占位，保持网格结构（否则整张图会塌）
+                row.append({"empty": True, "date": "", "count": 0, "level": 0, "people": []})
+                continue
+            people = by_date.get(day, [])
+            count = len(people)
+            total += count
+            max_count = max(max_count, count)
+            row.append(
+                {
+                    "empty": False,
+                    "date": day.isoformat(),
+                    "iso": day.isoformat(),
+                    "day": day.day,
+                    "month": day.month,
+                    "count": count,
+                    "people": people,
+                    "level": 0 if count == 0 else (1 if count == 1 else (2 if count == 2 else 3)),
+                    "weekday": day.weekday(),
+                    "is_today": day == today,
+                    "tip": _cell_tip(day, people, today),
+                }
+            )
+        weeks.append(row)
+
+    # 月份标签：取每月第一格所在的列。
+    # 去重按「年-月」而不是「月」—— 跨年的 365 天里 10 月会出现两次，
+    # 只按月份去重会让最后一整段（约 5 列）没有标签。
+    # 相邻两个标签的列距太近（同月只有 4-5 列）时让后一个顶掉前一个，
+    # 否则"10月11月12月"会挤成一坨 —— 宁可少标，不可重叠。
+    months: List[Dict[str, Any]] = []
+    seen = set()
+    for col, week in enumerate(weeks):
+        for cell in week:
+            key = cell.get("date", "")[:7]
+            if not cell.get("empty") and key and key not in seen:
+                seen.add(key)
+                label = {"label": f"{cell['month']}月", "col": col}
+                if months and col - months[-1]["col"] < 4:
+                    months[-1] = label
+                else:
+                    months.append(label)
+                break
+
+    return {
+        "days": days,
+        "total": total,
+        "max": max_count,
+        "weeks": weeks,
+        "months": months,
+        "today": today.isoformat(),
+    }
