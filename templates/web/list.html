@@ -2,6 +2,23 @@
 {% block title %}时间轴 · 生日提醒{% endblock %}
 
 {% block content %}
+  {# 跑马灯：极繁风格的招牌元素。内容取"最近要过生日的人"，
+     没有数据时给一句固定话术，避免空条。滚动是纯 CSS 动画，
+     prefers-reduced-motion 下自动停。 #}
+  {# 跑马灯：同一段内容放两份，整体左移一份宽度后无缝接上。 #}
+  <div class="marquee" aria-hidden="true">
+    <span>
+      生日提醒 · 提前几天开始每天提醒 · 生日前夜再提醒一次
+      {%- for r in timeline[:6] if r.days_until is not none %} · {{ r.name }} 还有 {{ r.days_until }} 天{% endfor %}
+      · 生日当天不再打扰 ·
+    </span>
+    <span>
+      生日提醒 · 提前几天开始每天提醒 · 生日前夜再提醒一次
+      {%- for r in timeline[:6] if r.days_until is not none %} · {{ r.name }} 还有 {{ r.days_until }} 天{% endfor %}
+      · 生日当天不再打扰 ·
+    </span>
+  </div>
+
   <div class="pagehead">
     <h1>时间轴</h1>
     <p class="pagehead__sub">

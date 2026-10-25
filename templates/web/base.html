@@ -4,6 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}生日提醒{% endblock %}</title>
+  {# 字体预连：连不上也不影响 —— CSS 里每个字族都有系统字体降级，
+     中文更是全走本地字体，版面不会塌。 #}
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -33,7 +37,7 @@
   </main>
 
   <footer class="foot">
-    <p>发送由 <code>run</code> 命令负责，界面只维护名单。改完配置记得让定时任务重新加载。</p>
+    <p>每天 09:00 与生日前夜 23:55 自动发送 · 界面只维护名单 · 改完配置会让定时任务重新加载</p>
   </footer>
 
   {% block scripts %}{% endblock %}
