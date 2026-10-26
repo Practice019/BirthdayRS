@@ -2826,6 +2826,25 @@ def test_heatmap_labels_repeat_month_across_years():
     assert hm["months"][-1]["col"] >= 44, "末尾标签要落在最后几列"
 
 
+def test_heatmap_weekday_labels_match_row_order():
+    """左侧星期栏必须与 weeks 的行顺序一致。
+
+    行是从周一排到周日的，标签若写成「日一二三四五六」，
+    整张图会每一天都指错星期 —— 而且看不出错，只会让人以为记错了生日。
+    """
+    from datetime import date
+
+    hm = _heatmap([], date(2026, 10, 26))
+    labels = hm["weekday_labels"]
+
+    assert len(labels) == 7
+    assert labels == ["一", "二", "三", "四", "五", "六", "日"]
+    # 首行第一个格子的 weekday() 应是 0（周一）
+    first = hm["weeks"][0][0]
+    assert first["weekday"] == 0
+    assert labels[first["weekday"]] == "一"
+
+
 async def test_timeline_page_renders_heatmap(client):
     """页面里要真的有这张图，且浮层文案已经渲染进 DOM。"""
     resp = await client.get("/")
@@ -2836,5 +2855,8 @@ async def test_timeline_page_renders_heatmap(client):
     assert "未来一年" in html
     assert '<span class="hm-cell hm-cell--void"' in html
     assert 'role="listitem"' in html
+    # 星期栏要渲染出来，否则 7 行格子不悬浮就不知道哪行是星期几
+    assert "heatmap__weekdays" in html
+    assert "heatmap__graph" in html
     # 浮层靠 data-tip，不能只留 title（否则原生 tooltip 会和自绘浮层打架）
     assert "data-tip=" in html

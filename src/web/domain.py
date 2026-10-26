@@ -851,5 +851,8 @@ def build_heatmap(
         "max": max_count,
         "weeks": weeks,
         "months": months,
+        # 行 = 周一..周日，与 weeks 里每行的顺序一致。左侧星期栏直接用，
+        # 不用在模板里写死——顺序和网格对不上时，图上会指错星期。
+        "weekday_labels": ["一", "二", "三", "四", "五", "六", "日"],
         "today": today.isoformat(),
     }

@@ -795,16 +795,26 @@ input[type="checkbox"]:focus-visible { outline: 3px solid var(--blue); outline-o
 }
 
 /* ---------- 未来一年热力图（GitHub 贡献图那种）----------
-   一天一小格，53 列 × 7 行，行 = 周一到周日。
-   极繁语言：零圆角、2px 墨黑边框、硬色块（不用渐变）；
-   但格子本身很小，边框降到 1px 否则会糊成一团。 */
+   一天一小格，53 列 × 7 行，行 = 周一..周日，列 = 一周。
+
+   和第一版最大的差别：**格子不再带边框**。
+   365 个 1px 黑框叠在一起是一张黑网，密度信号全被网格线吃掉，
+   颜色反而变成点缀。GitHub 的做法是：无边框 + 间隙 + 同色相逐级加深。
+   外框（2px 墨黑 + 硬阴影 + 零圆角）保留极繁语言，里面安静下来。 */
 
 .heatmap {
-  /* 格子尺寸只在这里定义一次：月份标签和格子必须共用，否则标签会错列。
-     16 + 3 的 53 列 = 1004px，1440 视口下不用横向滚动就能看全一年；
-     再大就会溢出容器 —— 宁可让使用者滚一下，也不压缩格子（压了就不准） */
-  --hm-cell: 16px;
-  --hm-gap: 3px;
+  /* 格子尺寸只在这里定义一次：月份标签、星期栏、格子必须共用，
+     否则三者会错行。
+     53×19 + 52×2 = 1111px，正好填满 1440 视口下的面板内宽（约 1114）；
+     更窄的视口会横向滚动，不压缩格子。 */
+  --hm-cell: 19px;
+  --hm-gap: 2px;
+  /* 同色相四级：从"没有"到"三个人过生日"，靠明度而不是换颜色。
+     换色相会让人以为是四种不同的事，实际只是数量不同。 */
+  --hm-0: #ebdfcd;
+  --hm-1: #ffb8e2;
+  --hm-2: #ff3cac;
+  --hm-3: #a8006b;
   border: var(--border);
   box-shadow: var(--shadow);
   background: var(--bg);
@@ -819,7 +829,6 @@ input[type="checkbox"]:focus-visible { outline: 3px solid var(--blue); outline-o
   font-family: var(--font-mono);
   font-size: 12.5px;
   font-weight: 700;
-  text-transform: uppercase;
   letter-spacing: 0.03em;
   list-style: none;
 }
@@ -831,20 +840,46 @@ input[type="checkbox"]:focus-visible { outline: 3px solid var(--blue); outline-o
 }
 .heatmap[open] .heatmap__summary::before { content: "▾ "; }
 .heatmap__summary:hover { background: var(--green); }
-.heatmap__hint { font-weight: 400; opacity: 0.7; text-transform: none; }
+.heatmap__hint { font-weight: 400; opacity: 0.7; }
 
 /* 53 列在窄屏放不下 —— 横向滚动，不压缩格子（压了就点不准） */
 .heatmap__scroll { overflow-x: auto; padding: var(--sp-3) var(--sp-4); }
-.heatmap__body { display: inline-block; min-width: 100%; }
 
-/* 月份标签与格子用同一套列宽 */
+/* 整张图是一个 2×2 网格：
+        [空]      [月份标签]
+        [星期栏]  [格子]
+   这样星期栏与格子自动对齐，不需要手写 padding 去凑月份那一行的高度。 */
+.heatmap__graph {
+  display: grid;
+  grid-template-rows: auto auto;
+  grid-template-columns: auto auto;
+  gap: 4px 6px;
+  width: max-content;
+}
+.heatmap__weekdays {
+  grid-area: 2 / 1;
+  display: grid;
+  grid-template-rows: repeat(7, var(--hm-cell));
+  gap: var(--hm-gap);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  line-height: 1;
+  color: var(--muted);
+  text-align: right;
+}
+.heatmap__weekdays span {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+/* 月份标签与格子共用同一套列宽，标签才会正好落在对应那一列 */
 .heatmap__months {
+  grid-area: 1 / 2;
   display: grid;
   grid-auto-flow: column;
-  /* 与格子同宽同间距，标签才会正好落在对应那一列 */
   grid-auto-columns: var(--hm-cell);
   gap: var(--hm-gap);
-  margin-bottom: 4px;
   font-family: var(--font-mono);
   font-size: 10px;
   color: var(--muted);
@@ -858,11 +893,11 @@ input[type="checkbox"]:focus-visible { outline: 3px solid var(--blue); outline-o
   justify-self: start;
 }
 
-/* 格子：横向排布，每 7 个换行 = 一周一列（与 GitHub 一致：
-   列是周，行是星期）。用 grid-auto-flow: column 自动成 53 列。 */
+/* 格子：grid-auto-flow: column 自动成 53 列（列 = 周，行 = 星期） */
 .heatmap__grid {
+  grid-area: 2 / 2;
   display: grid;
-  grid-template-rows: repeat(7, 1fr);
+  grid-template-rows: repeat(7, var(--hm-cell));
   grid-auto-flow: column;
   grid-auto-columns: var(--hm-cell);
   gap: var(--hm-gap);
@@ -873,28 +908,29 @@ input[type="checkbox"]:focus-visible { outline: 3px solid var(--blue); outline-o
 .hm-cell {
   width: var(--hm-cell);
   height: var(--hm-cell);
-  border: 1px solid var(--fg);
-  background: var(--bg);
-  position: relative;
+  background: var(--hm-0);
   display: block;
+  position: relative;
+  transition: transform 80ms var(--ease);
 }
-.hm-cell--void { border-color: transparent; background: transparent; }
-/* 五档：0 空 / 1 很少 / 2 中 / 3 多。硬色块，不用渐变 */
-.hm-cell--l0 { background: #fff5e6; }
-.hm-cell--l1 { background: var(--green); }
-.hm-cell--l2 { background: var(--yellow); }
-.hm-cell--l3 { background: var(--pink); }
-/* 今天：加粗边框 + 轻微放大，一眼找到起点 */
+/* 窗口外的占位格（为了保持网格结构）—— 必须完全透明，否则边缘会多出半列 */
+.hm-cell--void { background: transparent; }
+.hm-cell--l1 { background: var(--hm-1); }
+.hm-cell--l2 { background: var(--hm-2); }
+.hm-cell--l3 { background: var(--hm-3); }
+/* 今天：蓝框圈出来当锚点。用 outline 不用 border ——
+   border 会让格子在 border-box 下缩一圈，一眼就看得出比邻居小 */
 .hm-cell--today {
-  border: 2px solid var(--blue);
-  box-shadow: 0 0 0 1px var(--bg);
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
   z-index: 2;
 }
 .hm-cell:hover {
-  outline: 2px solid var(--blue);
+  outline: 2px solid var(--fg);
   outline-offset: 1px;
   z-index: 3;
 }
+.hm-cell--today:hover { outline-color: var(--blue); }
 
 /* 悬浮浮层：不用 ::after —— .heatmap__scroll 有 overflow-x: auto，
    绝对定位的子元素会被容器裁掉（第一列左侧、最上一行顶部都会缺角）。
@@ -916,7 +952,7 @@ input[type="checkbox"]:focus-visible { outline: 3px solid var(--blue); outline-o
 }
 .hm-tip[data-show] { display: block; }
 
-/* 图例 */
+/* 图例：少 ▢▢▢▢ 多 */
 .heatmap__legend {
   display: flex;
   align-items: center;
@@ -933,4 +969,5 @@ input[type="checkbox"]:focus-visible { outline: 3px solid var(--blue); outline-o
   /* 手机上一定放不下，直接缩小格子 + 横向滚动，滚到底能看到全年 */
   .heatmap { --hm-cell: 12px; --hm-gap: 3px; }
   .heatmap__months { font-size: 9px; }
+  .heatmap__weekdays { font-size: 8.5px; }
 }

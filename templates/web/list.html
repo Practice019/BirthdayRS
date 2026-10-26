@@ -41,11 +41,20 @@
     </summary>
 
     <div class="heatmap__scroll">
-      <div class="heatmap__body">
+      {# 2×2 网格：左上留空 / 右上月份 / 左下星期 / 右下格子。
+         这样星期栏和格子自动对齐，不用手写 padding 去凑高度。 #}
+      <div class="heatmap__graph">
         {# 月份标签：按列定位，与下面的格子对齐 #}
         <div class="heatmap__months" aria-hidden="true">
           {% for m in heatmap.months %}
             <span class="heatmap__month" style="grid-column: {{ m.col + 1 }}">{{ m.label }}</span>
+          {% endfor %}
+        </div>
+
+        {# 星期栏：GitHub 只标 Mon/Wed/Fri，但中文一两个字就够，全标更清楚 #}
+        <div class="heatmap__weekdays" aria-hidden="true">
+          {% for w in heatmap.weekday_labels %}
+            <span>{{ w }}</span>
           {% endfor %}
         </div>
 
